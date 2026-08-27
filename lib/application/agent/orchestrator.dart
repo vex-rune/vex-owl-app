@@ -226,6 +226,12 @@ class _RunSession {
   /// (findById 返回 null → no-op → 消息不被落库)。
   Future<void> _pending = Future<void>.value();
 
+  /// 本次 run 是否以错误终态结束(收到 AgentFinish(error))。
+  ///
+  /// 用于让 [start] 的 doOnComplete 跳过 finalize / bumpRound / emit idle,
+  /// 错误已在 doOnEach 里落库 + 广播 SendStatus.error。
+  bool _errored = false;
+
   Agent get _agent => orchestrator._agent;
   ConfigRepository get _configRepo => orchestrator._configRepository;
   TurnMessageStore get _store => orchestrator._messageStore;
@@ -243,6 +249,31 @@ class _RunSession {
 
       _subscription = run.subscribe()
           .doOnEach((response) {
+        // 终态错误:模型调用失败。QuickAgent 把异常包成 AgentFinish(error)
+        // 作为普通事件 emit,而 serialize 对终态返回空串会被下面跳过,
+        // 因此这里单独处理:把 errorMessage 落库为错误消息 + 广播 error 状态,
+        // 避免"发出去没回答"的静默失败。
+        if (response is AgentFinish && response.isError) {
+          final err = response.errorMessage ?? '未知错误';
+          _errored = true;
+          _pending = _pending
+              .then((_) => _store.appendDelta(
+                    conversationId: conversationId,
+                    turnId: turnId,
+                    delta: err,
+                  ))
+              .then((_) => _store.markError(turnId, err))
+              .then((_) {
+            orchestrator._emit(
+              conversationId,
+              status: SendStatus.error,
+              errorMessage: err,
+            );
+          }, onError: (e, st) {
+            Log.error(_tag, '错误落库失败', error: e, stackTrace: st);
+          });
+          return;
+        }
         final delta = AgentResponseSerializer.serialize(response);
         if (delta.isEmpty) return;
         // 串到 chain 末尾,不 await —— 保持 stream 不阻塞。
@@ -269,6 +300,12 @@ class _RunSession {
       }).doOnComplete(() {
         // finalize 必须在所有 appendDelta 之后 —— 串到 chain 末尾。
         _pending = _pending.then((_) async {
+          // 错误已在 doOnEach 落库 + 广播 error,这里不再 finalize / bumpRound /
+          // emit idle,避免覆盖错误状态。
+          if (_errored) {
+            orchestrator._removeSession(conversationId);
+            return;
+          }
           await _store.finalize(turnId);
           try {
             await _sessionRepo.bumpRound(conversationId);

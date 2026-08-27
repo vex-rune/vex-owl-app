@@ -121,4 +121,14 @@ class OwlConfig {
 
   /// 脱敏后的 apiKey(便于 UI 显示)。
   String get redactedApiKey => _redactKey(apiKey);
+
+  /// 是否已完成有效配置(apiKey 非空且非占位、baseUrl 非空)。
+  ///
+  /// 用于发送前守卫:未配置时提示用户去设置页,避免空配置发起请求后
+  /// 模型静默失败(异常被 QuickAgent 包成 AgentFinish(error),再被
+  /// orchestrator 的 serialize 跳过,表现为"发出去没回答")。
+  bool get isConfigured =>
+      apiKey.trim().isNotEmpty &&
+      apiKey != '????' &&
+      baseUrl.trim().isNotEmpty;
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../application/agent/orchestrator.dart';
 import '../../application/providers.dart';
@@ -49,6 +50,19 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Future<void> _send(String userInput) async {
+    // 配置守卫:apiKey/baseUrl 未配置时提示并跳设置页,避免空配置发起请求后
+    // 模型静默失败(表现为"发出去没回答")。
+    final cfg = await ref.read(currentConfigProvider.future);
+    debugPrint('[ChatPage guard] apiKey=${cfg.redactedApiKey} '
+        'baseUrl=${cfg.baseUrl} model=${cfg.model} '
+        'isConfigured=${cfg.isConfigured}');
+    if (!cfg.isConfigured) {
+      _showError('请先在设置中配置 API Key 与 Base URL');
+      if (!mounted) return;
+      context.push('/home/settings');
+      return;
+    }
+
     final orchestrator = await ref.read(agentOrchestratorProvider.future);
     final started = await orchestrator.send(
       conversationId: widget.conversationId,

@@ -69,7 +69,7 @@ class _SplashPageState extends ConsumerState<SplashPage> {
             children: [
               const OwlLogo.large(),
               const SizedBox(height: AppTheme.space5),
-              Text('Owl', style: theme.textTheme.headlineSmall),
+              Text('智鸮', style: theme.textTheme.headlineSmall),
               Text('', style: theme.textTheme.headlineSmall),
               const SizedBox(height: AppTheme.space1),
               Text(

@@ -17,6 +17,6 @@ void main() {
     );
 
     // AppBar 标题
-    expect(find.text('vex owl'), findsOneWidget);
+    expect(find.text('智鸮'), findsOneWidget);
   });
 }

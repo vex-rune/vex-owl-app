@@ -1,0 +1,65 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub_cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Drift 生成代码应入库(其它成员无需本地再跑 build_runner)。
+# 如未来真有生成代码禁止提交,再单独加 `**/db.g.dart` 黑名单。
+
+# 本地密钥与配置
+.env
+.env.*
+*.pem
+*.key
+*.p12
+
+# 平台原生构建产物
+**/Pods/
+**/ephemeral/
+**/flutter-plugins
+**/flutter_export_environment.sh
+**/GeneratedPluginRegistrant.*
+**/Pods.xcconfig
+**/Flutter/Generated.xcconfig

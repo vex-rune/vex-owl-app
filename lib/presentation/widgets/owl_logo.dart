@@ -41,11 +41,11 @@ class OwlLogo extends StatelessWidget {
       filterQuality: FilterQuality.medium,
     );
 
-    // 透明 PNG 直接显示即可,不需要 ColorFiltered
+    // 用 ClipOval 把方形 PNG 裁成圆形显示
     return SizedBox(
       width: size,
       height: size,
-      child: image,
+      child: ClipOval(child: image),
     );
   }
 }

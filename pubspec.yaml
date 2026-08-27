@@ -1,5 +1,5 @@
-name: vex_owl_app
-description: "vex owl - 本地实时 AI 对话应用"
+name: Owl
+description: "Owl - 本地实时 AI 对话应用"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none'
@@ -47,9 +47,16 @@ dev_dependencies:
   mocktail: ^1.0.4
   drift_dev: ^2.20.0
   build_runner: ^2.4.13
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
 
   assets:
     - assets/logo/
+
+# App 图标生成配置 (运行: dart run flutter_launcher_icons)
+flutter_launcher_icons:
+  android: true # 覆盖默认 ic_launcher
+  image_path: "assets/logo/logo.png"
+  min_sdk_android: 21

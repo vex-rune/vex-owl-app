@@ -45,7 +45,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final sessionsAsync = ref.watch(sessionsStreamProvider);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('vex owl'),
+        title: const Text('Owl'),
         actions: [
           IconButton(
             tooltip: '设置',

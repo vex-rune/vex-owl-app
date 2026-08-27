@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.vex_owl_app"
+    namespace = "com.vex.owl"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 

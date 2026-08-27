@@ -1,4 +1,4 @@
-package com.example.vex_owl_app
+package com.vex.owl
 
 import io.flutter.embedding.android.FlutterActivity
 

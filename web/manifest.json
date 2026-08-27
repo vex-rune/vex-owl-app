@@ -1,6 +1,6 @@
 {
-    "name": "vex_owl_app",
-    "short_name": "vex_owl_app",
+    "name": "Owl",
+    "short_name": "Owl",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

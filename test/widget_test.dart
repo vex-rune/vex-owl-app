@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:vex_owl_app/presentation/pages/home_page.dart';
+import 'package:owl/presentation/pages/home_page.dart';
 
 void main() {
   testWidgets('home page renders with app bar title', (

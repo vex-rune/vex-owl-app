@@ -72,7 +72,7 @@
 # Short Term
 
 ## 2026-08-23
-- 10:30 [conv-uuid] 用户提到在重构 vex_owl_app 的状态层
+- 10:30 [conv-uuid] 用户提到在重构 Owl 的状态层
 - 14:12 [conv-uuid] 用户问过 Python 的 asyncio 入门
 
 <!-- rolling window: keep last 7 days -->

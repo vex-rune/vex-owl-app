@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../../core/core.dart';
-import '../../../core/util/talker_service.dart';
 import '../llm_provider.dart';
 import '../models/deepseek_models.dart';
 
@@ -79,6 +78,12 @@ class DeepSeekProvider implements LlmProvider {
 
   @override
   Future<bool> testConnection(ApiConfig config) async {
+    // 检查 API Key 是否为空
+    if (config.apiKey.isEmpty) {
+      log.error('API Key 为空');
+      return false;
+    }
+
     try {
       final response = await http
           .post(
@@ -93,8 +98,20 @@ class DeepSeekProvider implements LlmProvider {
             }),
           )
           .timeout(const Duration(seconds: 10));
+      // 检查响应体中是否有错误
+      if (response.statusCode >= 400) {
+        try {
+          final body = jsonDecode(response.body) as Map<String, dynamic>;
+          final error = body['error']?['message'] ?? body['message'];
+          log.error('API 错误: $error');
+        } catch (_) {
+          log.error('API 返回 ${response.statusCode}');
+        }
+        return false;
+      }
       return response.statusCode >= 200 && response.statusCode < 300;
-    } catch (_) {
+    } catch (e, st) {
+      log.error('连接异常: $e', st);
       return false;
     }
   }
@@ -131,13 +148,13 @@ class DeepSeekProvider implements LlmProvider {
     );
 
     final bodyJson = jsonEncode(request.toJson());
-    TalkerService.instance.llmReq(
+    log.debug(
       'POST $_officialBaseUrl/chat/completions\n'
       'Headers: {\n'
       '  Content-Type: application/json\n'
       '  Authorization: Bearer ${_maskKey(config.apiKey)}\n'
       '}\n'
-      'Body: $bodyJson',
+      'Body: <contains_messages>',
     );
 
     final httpRequest = http.Request(
@@ -151,15 +168,15 @@ class DeepSeekProvider implements LlmProvider {
     try {
       response = await httpRequest.send().timeout(const Duration(seconds: 60));
     } catch (e) {
-      TalkerService.instance.llmError('网络异常: $e');
+      log.error('网络异常: $e');
       yield LlmStreamEvent.error('网络异常：$e');
       return;
     }
 
-    TalkerService.instance.llm('HTTP ${response.statusCode}');
+    log.debug('HTTP ${response.statusCode}');
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      TalkerService.instance.llmError('API 返回 ${response.statusCode}');
+      log.error('API 返回 ${response.statusCode}');
       yield LlmStreamEvent.error('API 返回 ${response.statusCode}');
       return;
     }
@@ -189,7 +206,7 @@ class DeepSeekProvider implements LlmProvider {
         final data = raw.substring(5).trim();
         if (data == '[DONE]') {
           streamEnded = true;
-          TalkerService.instance.llmResp('[DONE] tokens=$tokenCount');
+          log.info('[DONE] tokens=$tokenCount');
           break;
         }
 
@@ -266,7 +283,7 @@ class DeepSeekProvider implements LlmProvider {
       yield LlmStreamEvent.toolCalls(calls);
     }
 
-    TalkerService.instance.llm('STREAM END (buffer exhausted)');
+    log.debug('STREAM END (buffer exhausted)');
     yield LlmStreamEvent.done(const LlmUsage());
   }
 

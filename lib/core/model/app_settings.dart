@@ -276,4 +276,91 @@ class AppSettings {
       stats: stats ?? this.stats,
     );
   }
+
+  // ── JSONL 序列化 ─────────────────────────────────────────────────────
+
+  /// 序列化为 JSON Map（用于 app_settings.jsonl）
+  Map<String, dynamic> toJsonl() => {
+        'version': version,
+        'context': {
+          'strategy': context.strategy.name,
+          'maxMessages': context.maxMessages,
+          'summaryMaxChars': context.summaryMaxChars,
+        },
+        'memory': {
+          'injectionEnabled': memory.injectionEnabled,
+          'profileEnabled': memory.profileEnabled,
+          'indexEnabled': memory.indexEnabled,
+          'shortTermEnabled': memory.shortTermEnabled,
+          'todosEnabled': memory.todosEnabled,
+          'shortTermDays': memory.shortTermDays,
+          'profileBudget': memory.profileBudget,
+          'indexBudget': memory.indexBudget,
+          'shortTermBudget': memory.shortTermBudget,
+          'todosBudget': memory.todosBudget,
+        },
+        'features': {
+          'autoIngest': features.autoIngest,
+          'autoConflictCheck': features.autoConflictCheck,
+          'autoLint': features.autoLint,
+          'autoBackup': features.autoBackup,
+          'autoCleanRaw': features.autoCleanRaw,
+        },
+        'tokens': {
+          'chatTokenThreshold': tokens.chatTokenThreshold,
+          'ingestTokenThreshold': tokens.ingestTokenThreshold,
+        },
+        'stats': {
+          'totalInputTokens': stats.totalInputTokens,
+          'totalOutputTokens': stats.totalOutputTokens,
+        },
+      };
+
+  /// 从 JSON Map 反序列化
+  factory AppSettings.fromJsonl(Map<String, dynamic> json) {
+    final ctx = json['context'] as Map<String, dynamic>? ?? {};
+    final mem = json['memory'] as Map<String, dynamic>? ?? {};
+    final feat = json['features'] as Map<String, dynamic>? ?? {};
+    final tok = json['tokens'] as Map<String, dynamic>? ?? {};
+    final st = json['stats'] as Map<String, dynamic>? ?? {};
+
+    return AppSettings(
+      version: json['version'] as int? ?? 1,
+      context: ContextSettings(
+        strategy: ContextStrategy.values.firstWhere(
+          (s) => s.name == (ctx['strategy'] as String? ?? 'truncate'),
+          orElse: () => ContextStrategy.truncate,
+        ),
+        maxMessages: ctx['maxMessages'] as int? ?? 20,
+        summaryMaxChars: ctx['summaryMaxChars'] as int? ?? 300,
+      ),
+      memory: MemorySettings(
+        injectionEnabled: mem['injectionEnabled'] as bool? ?? true,
+        profileEnabled: mem['profileEnabled'] as bool? ?? true,
+        indexEnabled: mem['indexEnabled'] as bool? ?? true,
+        shortTermEnabled: mem['shortTermEnabled'] as bool? ?? true,
+        todosEnabled: mem['todosEnabled'] as bool? ?? true,
+        shortTermDays: mem['shortTermDays'] as int? ?? 7,
+        profileBudget: mem['profileBudget'] as int? ?? 800,
+        indexBudget: mem['indexBudget'] as int? ?? 500,
+        shortTermBudget: mem['shortTermBudget'] as int? ?? 600,
+        todosBudget: mem['todosBudget'] as int? ?? 400,
+      ),
+      features: FeatureSettings(
+        autoIngest: feat['autoIngest'] as bool? ?? false,
+        autoConflictCheck: feat['autoConflictCheck'] as bool? ?? true,
+        autoLint: feat['autoLint'] as bool? ?? false,
+        autoBackup: feat['autoBackup'] as bool? ?? false,
+        autoCleanRaw: feat['autoCleanRaw'] as bool? ?? false,
+      ),
+      tokens: TokenSettings(
+        chatTokenThreshold: tok['chatTokenThreshold'] as int? ?? 4096,
+        ingestTokenThreshold: tok['ingestTokenThreshold'] as int? ?? 8192,
+      ),
+      stats: StatsSettings(
+        totalInputTokens: st['totalInputTokens'] as int? ?? 0,
+        totalOutputTokens: st['totalOutputTokens'] as int? ?? 0,
+      ),
+    );
+  }
 }

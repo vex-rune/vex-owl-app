@@ -98,4 +98,33 @@ class Session {
   String toString() =>
       'Session(id: $id, name: $name, archived: $archived, '
       'pinned: $pinned, messageCount: $messageCount)';
+
+  // ── JSONL 序列化 ─────────────────────────────────────────────────────
+
+  /// 序列化为单行 JSON 对象（用于 session.jsonl）
+  Map<String, dynamic> toJsonl() => {
+        'version': 1,
+        'id': id,
+        'name': name,
+        'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+        'context': context,
+        'archived': archived,
+        'pinned': pinned,
+        'messageCount': messageCount,
+      };
+
+  /// 从单行 JSON 对象反序列化
+  factory Session.fromJsonl(Map<String, dynamic> json) {
+    return Session(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '未命名会话',
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? DateTime.now(),
+      context: json['context'] as String? ?? '',
+      archived: json['archived'] as bool? ?? false,
+      pinned: json['pinned'] as bool? ?? false,
+      messageCount: json['messageCount'] as int? ?? 0,
+    );
+  }
 }

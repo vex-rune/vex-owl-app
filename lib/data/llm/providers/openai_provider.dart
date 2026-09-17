@@ -52,6 +52,12 @@ class OpenAiProvider implements LlmProvider {
 
   @override
   Future<bool> testConnection(ApiConfig config) async {
+    // 检查 API Key 是否为空
+    if (config.apiKey.isEmpty) {
+      log.error('API Key 为空');
+      return false;
+    }
+
     try {
       final response = await http
           .post(
@@ -64,8 +70,20 @@ class OpenAiProvider implements LlmProvider {
             }),
           )
           .timeout(const Duration(seconds: 10));
+      // 检查响应体中是否有错误
+      if (response.statusCode >= 400) {
+        try {
+          final body = jsonDecode(response.body) as Map<String, dynamic>;
+          final error = body['error']?['message'] ?? body['message'];
+          log.error('API 错误: $error');
+        } catch (_) {
+          log.error('API 返回 ${response.statusCode}');
+        }
+        return false;
+      }
       return response.statusCode >= 200 && response.statusCode < 300;
-    } catch (_) {
+    } catch (e, st) {
+      log.error('连接异常: $e', st);
       return false;
     }
   }

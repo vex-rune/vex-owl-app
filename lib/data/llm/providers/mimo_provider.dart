@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../../core/core.dart';
-import '../../../core/util/talker_service.dart';
 import '../llm_provider.dart';
 import '../models/mimo_models.dart';
 
@@ -16,7 +15,7 @@ import '../models/mimo_models.dart';
 /// 部署文档：https://github.com/XiaomiMiMo/MiMo
 class MimoProvider implements LlmProvider {
   static const String _defaultModel = 'mimo-v2.5-pro';
-  static const String _defaultEndpoint = 'http://localhost:8000/v1';
+  static const String _defaultEndpoint = 'https://token-plan-cn.xiaomimimo.com/v1';
 
   @override
   String get id => 'mimo';
@@ -84,6 +83,12 @@ class MimoProvider implements LlmProvider {
 
   @override
   Future<bool> testConnection(ApiConfig config) async {
+    // 检查 API Key 是否为空
+    if (config.apiKey.isEmpty) {
+      log.error('API Key 为空');
+      return false;
+    }
+
     try {
       final response = await http
           .post(
@@ -98,8 +103,20 @@ class MimoProvider implements LlmProvider {
             }),
           )
           .timeout(const Duration(seconds: 10));
+      // 检查响应体中是否有错误
+      if (response.statusCode >= 400) {
+        try {
+          final body = jsonDecode(response.body) as Map<String, dynamic>;
+          final error = body['error']?['message'] ?? body['message'];
+          log.error('API 错误: $error');
+        } catch (_) {
+          log.error('API 返回 ${response.statusCode}');
+        }
+        return false;
+      }
       return response.statusCode >= 200 && response.statusCode < 300;
-    } catch (_) {
+    } catch (e, st) {
+      log.error('连接异常: $e', st);
       return false;
     }
   }
@@ -133,21 +150,25 @@ class MimoProvider implements LlmProvider {
     };
     request.body = jsonEncode(body);
 
-    TalkerService.instance.llmReq(
+    log.debug(
       'POST ${_base(config)}/chat/completions\n'
-      'Body: ${request.body}',
+      'Headers: {\n'
+      '  Content-Type: application/json\n'
+      '  Authorization: Bearer ${_maskKey(config.apiKey)}\n'
+      '}\n'
+      'Body: <contains_api_key>',
     );
 
     http.StreamedResponse response;
     try {
       response = await request.send().timeout(const Duration(seconds: 60));
     } catch (e) {
-      TalkerService.instance.llmError('网络异常: $e');
+      log.error('网络异常: $e');
       yield LlmStreamEvent.error('网络异常：$e');
       return;
     }
 
-    TalkerService.instance.llm('HTTP ${response.statusCode}');
+    log.debug('HTTP ${response.statusCode}');
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       yield LlmStreamEvent.error('HTTP ${response.statusCode}');
@@ -300,4 +321,9 @@ class MimoProvider implements LlmProvider {
         if (config.apiKey.isNotEmpty)
           'Authorization': 'Bearer ${config.apiKey}',
       };
+
+  String _maskKey(String key) {
+    if (key.length <= 8) return '****';
+    return '${key.substring(0, 4)}...${key.substring(key.length - 4)}';
+  }
 }

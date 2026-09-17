@@ -18,7 +18,6 @@ import 'package:path/path.dart' as p;
 
 import '../../core/core.dart';
 import '../../core/model/wiki_front_matter.dart';
-import '../../core/util/talker_service.dart';
 import 'session_file_service.dart';
 
 /// 压缩结果枚举
@@ -108,7 +107,7 @@ class ContextCompressor {
 
     final overflow = messages.length - options.maxMessages;
     final oldMessages = messages.sublist(0, overflow);
-    TalkerService.instance.chatInfo(
+    log.info(
       '🗜️ 触发上下文压缩：策略=${options.strategy.name} '
       '当前=${messages.length} 上限=${options.maxMessages} '
       '待裁剪=$overflow',
@@ -136,7 +135,7 @@ class ContextCompressor {
   }) async {
     final cfg = _deps.defaultConfig;
     if (cfg == null) {
-      TalkerService.instance.chatInfo(
+      log.info(
         '⚠️ 压缩失败：无默认 API 配置，降级为截断',
       );
       return CompressResult.compressedFailedFallbackToTruncate;
@@ -161,12 +160,12 @@ class ContextCompressor {
 
       // 写入 wiki/sessions/{date}-{name}.md
       await _writeSummary(session, summary);
-      TalkerService.instance.chatInfo(
+      log.info(
         '✅ 压缩完成：${oldMessages.length} 条消息 → ${summary.length} 字摘要',
       );
       return CompressResult.compressed;
     } catch (e, st) {
-      TalkerService.instance.llmError('❌ 压缩失败：$e\n$st');
+      log.error('❌ 压缩失败：$e\n$st');
       return CompressResult.compressedFailedFallbackToTruncate;
     }
   }

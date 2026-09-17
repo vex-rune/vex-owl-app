@@ -18,8 +18,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../../core/core.dart';
 import '../../core/model/wiki_file.dart';
-import '../../core/util/talker_service.dart';
 import 'wiki_lock_service.dart';
 
 /// Wiki 文件写入异常
@@ -184,7 +184,7 @@ class WikiFileWriter {
       sizeBytes: content.length,
     );
 
-    TalkerService.instance.wiki(
+    log.debug(
       '📝 写入 ${file.relativePath} (${content.length}B, kind=${kind.name})',
     );
   }
@@ -202,7 +202,7 @@ class WikiFileWriter {
       final dst = File(p.join(backupDir.path, '$safeName.$ts.bak'));
       await src.copy(dst.path);
     } catch (e) {
-      TalkerService.instance.wiki('⚠️ 备份失败：$relativePath / $e');
+      log.debug('⚠️ 备份失败：$relativePath / $e');
     }
   }
 

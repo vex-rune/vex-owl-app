@@ -353,4 +353,24 @@ class Message {
 
   @override
   String toString() => 'Message(id: $id, role: $role, parts: ${parts.length})';
+
+  // ── JSONL 序列化 ─────────────────────────────────────────────────────
+
+  /// 序列化为单行 JSON 对象（用于 messages.jsonl）
+  ///
+  /// 区别于 toJson()：不包含 streaming 字段（写入时 streaming 恒为 false）
+  Map<String, dynamic> toJsonl() {
+    final map = toJson();
+    map.remove('streaming'); // 写入时移除流式标记
+    return map;
+  }
+
+  /// 从单行 JSON 对象反序列化
+  factory Message.fromJsonl(Map<String, dynamic> json) {
+    // fromJson 本身已支持完整解析，调用它即可
+    return Message.fromJson({
+      ...json,
+      'streaming': false, // JSONL 存储的都是已完成的非流式消息
+    });
+  }
 }

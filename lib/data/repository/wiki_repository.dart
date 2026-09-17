@@ -3,46 +3,31 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../../application/parser/context_settings_parser.dart';
 import '../../application/service/wiki_file_writer.dart';
 import '../../application/service/wiki_lock_service.dart';
-import '../../core/model/wiki_file.dart';
-import '../../core/model/wiki_front_matter.dart';
-import '../../core/util/talker_service.dart';
+import '../../core/core.dart';
+import '../../data/storage/owl_root.dart';
 import 'i_wiki_repository.dart';
 
-/// Wiki 知识库仓库的文件系统实现（v5.0）
+/// Wiki 知识库仓库的文件系统实现（v6.4）
 ///
 /// 目录结构（跨平台）：
 /// - **Android**：`<手机存储根目录>/.owl/wiki/`
-///   （即 `/storage/emulated/0/.owl/wiki/`，与 `Documents/` 等系统目录平级；
-///    Android 11+ 需要 `MANAGE_EXTERNAL_STORAGE` 权限并引导用户去设置手动授权）
 /// - **iOS**：应用沙盒 `<AppDocuments>/.owl/wiki/`
-///   （iOS 沙盒限制无法写到公共目录，路径仍为应用专属）
 /// - **Windows / macOS / Linux**：用户主目录 `~/Documents/Owl/.owl/wiki/`
-///   （跨平台统一的"我的文档"路径，桌面平台无权限问题）
 ///
 /// 子目录：
 /// - `.meta/`（私有：锁+元数据+审计日志）
 /// - `.backup/`（自动备份）
 /// - `todos/` / `sessions/` / `concepts/` / `raw/`
 ///
-/// 主要职责：
-/// - 初始化目录结构、默认 schema/index/profile
-/// - 旧 `llm-wiki/` → 当前 `.owl/wiki/` 一次性迁移
-/// - 旧 `todos.md` 单文件 → `todos/todo-{uuid}.md` 多文件拆分
-/// - 旧 `sessions/{date}-{name}.md` → `sessions/{sessionId}.md`
-/// - 写入走 WikiFileWriter（加锁+原子+备份+审计）
+/// v6.4 变更：
+/// - Wiki 根目录从 `{appDocs}/.owl/wiki/` 改为 `OwlRoot.instance.wikiDir`
+/// - 文件锁使用 OwlRoot.metaDir（`.owl/.meta/wiki.lock`）
+/// - 配置读写已迁移到 ConfigStorage，WikiRepository 不再负责
 class WikiRepository implements IWikiRepository {
-  /// 桌面平台下的应用目录名（用于 ~/Documents/<name>/.owl/wiki/）
-  static const _appDirName = 'Owl';
-
-  /// v5 根目录名（隐藏 `.owl/` + 知识容器 `wiki/`）
-  static const _owlRoot = '.owl';
-  static const _wikiDir = 'wiki';
-
   /// v4 及以前使用的根目录（迁移时检测）
   static const _legacyWikiRoot = 'llm-wiki';
 
@@ -170,40 +155,15 @@ LLM 创建新页面后，仅在正文与 front-matter 中维护内容，索引�
         '> 来源：系统初始化 | 摄入时间：$timestamp\n';
   }
 
-  /// Wiki 根目录的绝对路径（惰性初始化）
+  /// Wiki 根目录（惰性初始化，使用 OwlRoot）
   String? _rootPath;
-  String? _appDocsPath;
-
-  /// 获取应用文档目录（缓存）
-  ///
-  /// Android：`<手机存储根目录>`（即 `/storage/emulated/0/`，与 Documents 平级）
-  /// iOS / 其他：应用专属目录（沙盒内）
-  Future<String> get _appDocs async {
-    if (_appDocsPath != null) return _appDocsPath!;
-    if (Platform.isAndroid) {
-      // Android：使用公共存储根目录（与 Documents 平级）
-      // Android 11+ 需要 MANAGE_EXTERNAL_STORAGE 权限
-      _appDocsPath = '/storage/emulated/0';
-    } else if (Platform.isIOS) {
-      // iOS：沙盒限制，只能用应用专属目录
-      _appDocsPath = (await getApplicationDocumentsDirectory()).path;
-    } else {
-      // 桌面平台：~/Documents/Owl/（跨平台统一"我的文档"）
-      final docs = await getApplicationDocumentsDirectory();
-      _appDocsPath = p.join(docs.path, _appDirName);
-    }
-    return _appDocsPath!;
-  }
 
   /// Wiki 根目录
   ///
-  /// - Android：`<手机存储>/.owl/wiki/`
-  /// - iOS：`<AppDocuments>/.owl/wiki/`
-  /// - 桌面：`<Documents>/Owl/.owl/wiki/`
+  /// 使用 OwlRoot.instance.wikiDir（跨平台统一）
   Future<String> get _root async {
     if (_rootPath != null) return _rootPath!;
-    final appDocs = await _appDocs;
-    _rootPath = p.join(appDocs, _owlRoot, _wikiDir);
+    _rootPath = OwlRoot.instance.wikiDir;
     return _rootPath!;
   }
 
@@ -212,8 +172,8 @@ LLM 创建新页面后，仅在正文与 front-matter 中维护内容，索引�
 
   Future<WikiLockService> get _lock async {
     if (_lockService != null) return _lockService!;
-    final root = await _root;
-    _lockService = WikiLockService(root);
+    // v6.4：锁文件在 .owl/.meta/wiki.lock（ OwlRoot.metaDir）
+    _lockService = WikiLockService(OwlRoot.instance.rootPath!);
     return _lockService!;
   }
 
@@ -283,11 +243,11 @@ LLM 创建新页面后，仅在正文与 front-matter 中维护内容，索引�
       // ignore
     }
 
-    TalkerService.instance.wiki('✅ Wiki 根目录初始化完成：$root');
+    log.debug('✅ Wiki 根目录初始化完成：$root');
   }
 
   @override
-  Future<String> getRootPath() async => await _root;
+  Future<String> getRootPath() async => OwlRoot.instance.wikiDir;
 
   @override
   Future<String> readIndex() async {
@@ -409,59 +369,6 @@ LLM 创建新页面后，仅在正文与 front-matter 中维护内容，索引�
     final root = await _root;
     final file = File(p.join(root, fileName));
     return file.exists();
-  }
-
-  // ───────────────────────── 应用设置文件 ─────────────────────────
-
-  Future<File> _contextSettingsFile() async {
-    final root = await _root;
-    return File(p.join(root, 'context-settings.md'));
-  }
-
-  @override
-  Future<String?> readContextSettings() async {
-    final file = await _contextSettingsFile();
-    if (!await file.exists()) return null;
-    return file.readAsString();
-  }
-
-  @override
-  Future<void> writeContextSettings(String content) async {
-    final file = await _contextSettingsFile();
-    final parent = file.parent;
-    if (!await parent.exists()) await parent.create(recursive: true);
-    await file.writeAsString(content, flush: true);
-  }
-
-  @override
-  Future<bool> contextSettingsExists() async {
-    final file = await _contextSettingsFile();
-    return file.exists();
-  }
-
-  // ───────────────────────── Agent 配置（每模型独立配置） ─────────────────────────
-
-  /// 从 `.meta/export-meta.json` 读取 `api_agents` 列表
-  /// 不存在或为空时返回空 List（调用方按 provider.supportedModels 初始化）
-  @override
-  Future<List<Map<String, dynamic>>> readAgentConfigsJson() async {
-    final meta = await readExportMeta();
-    final list = meta?['api_agents'];
-    if (list is List) {
-      return list
-          .whereType<Map<String, dynamic>>()
-          .toList(growable: false);
-    }
-    return const <Map<String, dynamic>>[];
-  }
-
-  /// 把 Agent 列表写回 `.meta/export-meta.json`
-  @override
-  Future<void> writeAgentConfigsJson(List<Map<String, dynamic>> agents) async {
-    final meta = await readExportMeta() ?? <String, dynamic>{};
-    meta['api_agents'] = agents;
-    meta['api_agents_updated_at'] = DateTime.now().toUtc().toIso8601String();
-    await writeExportMeta(meta);
   }
 
   // ───────────────────────── Todos 多文件 API ─────────────────────────
@@ -679,74 +586,11 @@ LLM 创建新页面后，仅在正文与 front-matter 中维护内容，索引�
 
   /// 检测并迁移旧 `llm-wiki/` 目录到 `.owl/wiki/`
   ///
-  /// 一次性：复制所有文件后，将旧目录改名为 `.llm-wiki.backup-{ts}`
-  /// 会尝试多个可能的旧位置（应用沙盒、旧 Android 公共文档目录等）。
+  /// v6.4：委托给 OwlRoot.instance 统一处理
   Future<void> _migrateLegacyIfNeeded() async {
-    // 候选旧目录：当前新位置之前可能存在过的所有可能路径
-    final candidates = await _candidateLegacyRoots();
-    Directory? legacyDir;
-    for (final c in candidates) {
-      final d = Directory(c);
-      if (await d.exists()) {
-        legacyDir = d;
-        break;
-      }
-    }
-    if (legacyDir == null) return;
-
-    final newRoot = p.join(await _appDocs, _owlRoot, _wikiDir);
-    final newDir = Directory(newRoot);
-
-    // 如果新目录已经存在数据，说明之前已迁移过，跳过
-    if (await newDir.exists()) {
-      final hasContent = await _dirHasContent(newDir);
-      if (hasContent) {
-        TalkerService.instance.wiki(
-          '⚠️ 检测到旧 llm-wiki/ 但新 .owl/wiki/ 已有内容，跳过迁移',
-        );
-        return;
-      }
-    }
-
-    TalkerService.instance.wiki(
-      '📦 开始迁移旧 ${legacyDir.path} → $newRoot',
-    );
-    await _copyDir(legacyDir, newDir);
-    await _migrateLegacyContent(newDir);
-
-    // 旧目录改名保留
-    final ts = DateTime.now().millisecondsSinceEpoch;
-    try {
-      await legacyDir.rename('${legacyDir.path}.backup-$ts');
-      TalkerService.instance.wiki('✅ 旧 llm-wiki/ 已重命名为 .backup');
-    } catch (e) {
-      TalkerService.instance.wiki('⚠️ 旧目录重命名失败：$e');
-    }
-  }
-
-  /// 返回可能的旧版 llm-wiki 候选根目录列表
-  Future<List<String>> _candidateLegacyRoots() async {
-    final roots = <String>[];
-    if (Platform.isAndroid) {
-      // 旧 v4 可能在这些位置
-      roots.add('/storage/emulated/0/llm-wiki');        // 手机存储根目录（v4.5）
-      roots.add('/storage/emulated/0/Android/data/com.vex.owl/files/llm-wiki'); // 应用沙盒
-      try {
-        final appFiles = await getApplicationDocumentsDirectory();
-        roots.add(p.join(appFiles.path, 'llm-wiki'));  // path_provider 给的位置
-      } catch (_) {}
-    } else {
-      // iOS / 桌面：旧版就只在应用文档目录
-      try {
-        final appFiles = await getApplicationDocumentsDirectory();
-        roots.add(p.join(appFiles.path, 'llm-wiki'));
-        // 桌面旧位置：~/Documents/llm-wiki（未带 Owl 子目录）
-        if (!Platform.isIOS) {
-          roots.add(p.join(appFiles.path, 'llm-wiki'));
-        }
-      } catch (_) {}
-    }
-    return roots;
+    // v6.4 迁移由 OwlRoot 统一处理，WikiRepository 不再重复迁移
+    // 这里只做向后兼容：检查 wiki/sessions 旧目录
+    // （会话迁移由 V1SessionMigration 单独处理）
   }
 
   Future<bool> _dirHasContent(Directory dir) async {
@@ -822,7 +666,7 @@ LLM 创建新页面后，仅在正文与 front-matter 中维护内容，索引�
     if (!await todosDir.exists()) await todosDir.create(recursive: true);
 
     final content = await oldTodos.readAsString();
-    final lines = const LineSplitter().convert(content);
+    final lines = const OwlLineSplitter().convert(content);
     var todoCount = 0;
     for (final raw in lines) {
       final line = raw.trim();
@@ -869,7 +713,7 @@ LLM 创建新页面后，仅在正文与 front-matter 中维护内容，索引�
     }
 
     if (todoCount > 0) {
-      TalkerService.instance.wiki('📋 旧 todos.md 拆分完成：$todoCount 条');
+      log.debug('📋 旧 todos.md 拆分完成：$todoCount 条');
     }
   }
 
@@ -932,9 +776,9 @@ LLM 创建新页面后，仅在正文与 front-matter 中维护内容，索引�
   }
 }
 
-/// LineSplitter 复用 dart:convert
-class LineSplitter {
-  const LineSplitter();
+/// OwlLineSplitter 复用 dart:convert
+class OwlLineSplitter {
+  const OwlLineSplitter();
   List<String> convert(String input) =>
       input.split(RegExp(r'\r\n|\r|\n'));
 }

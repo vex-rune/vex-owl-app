@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../../core/core.dart';
-import '../../../core/util/talker_service.dart';
 import '../llm_provider.dart';
 import '../models/minimax_models.dart';
 
@@ -14,7 +13,7 @@ import '../models/minimax_models.dart';
 /// 文档：https://platform.minimax.cn/docs/api-reference/text-chat-openai
 class MinimaxProvider implements LlmProvider {
   static const String _officialBaseUrl = 'https://api.minimax.cn/v1';
-  static const String _defaultModel = 'MiniMax M3';
+  static const String _defaultModel = 'MiniMax-M3';
 
   @override
   String get id => 'minimax';
@@ -25,8 +24,8 @@ class MinimaxProvider implements LlmProvider {
   @override
   List<ProviderModelPreset> get supportedModels => const [
     ProviderModelPreset(
-      id: 'MiniMax M3',
-      displayName: 'MiniMax M3',
+      id: 'MiniMax-M3',
+      displayName: 'MiniMax-M3',
       contextWindow: 128000,
       maxOutputTokens: 8192,
       description: 'MINIMAX 主力对话模型',
@@ -78,22 +77,51 @@ class MinimaxProvider implements LlmProvider {
 
   @override
   Future<bool> testConnection(ApiConfig config) async {
+    // 检查 API Key 是否为空
+    if (config.apiKey.isEmpty) {
+      log.error('API Key 为空');
+      return false;
+    }
+
     try {
       final response = await http
           .post(
             Uri.parse('$_officialBaseUrl/chat/completions'),
-            headers: _headers(config),
+            headers: {
+              ..._headers(config),
+              // MINIMAX 可能需要此 header
+              'Stream': 'false',
+            },
             body: jsonEncode({
               'model': _modelName(config),
               'messages': [
                 {'role': 'user', 'content': 'hi'},
               ],
+              'stream': false,
               'max_completion_tokens': 1,
+              'temperature': 1.0,
             }),
           )
           .timeout(const Duration(seconds: 10));
+
+      // 检查响应体中是否有错误（MINIMAX 可能有不同的错误格式）
+      if (response.statusCode >= 400) {
+        try {
+          final body = jsonDecode(response.body) as Map<String, dynamic>;
+          // MINIMAX 可能的错误格式
+          final error = body['error']?['message'] ??
+              body['message'] ??
+              body['msg'] ??
+              body.toString();
+          log.error('API 错误: $error');
+        } catch (_) {
+          log.error('API 返回 ${response.statusCode}');
+        }
+        return false;
+      }
       return response.statusCode >= 200 && response.statusCode < 300;
-    } catch (_) {
+    } catch (e, st) {
+      log.error('连接异常: $e', st);
       return false;
     }
   }
@@ -131,13 +159,13 @@ class MinimaxProvider implements LlmProvider {
     );
 
     final bodyJson = jsonEncode(request.toJson());
-    TalkerService.instance.llmReq(
+    log.debug(
       'POST $_officialBaseUrl/chat/completions\n'
       'Headers: {\n'
       '  Content-Type: application/json\n'
       '  Authorization: Bearer ${_maskKey(config.apiKey)}\n'
       '}\n'
-      'Body: $bodyJson',
+      'Body: <contains_messages>',
     );
 
     final httpRequest = http.Request(
@@ -153,15 +181,15 @@ class MinimaxProvider implements LlmProvider {
         Duration(seconds: request.timeout),
       );
     } catch (e) {
-      TalkerService.instance.llmError('网络异常: $e');
+      log.error('网络异常: $e');
       yield LlmStreamEvent.error('网络异常：$e');
       return;
     }
 
-    TalkerService.instance.llm('HTTP ${response.statusCode}');
+    log.debug('HTTP ${response.statusCode}');
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      TalkerService.instance.llmError('API 返回 ${response.statusCode}');
+      log.error('API 返回 ${response.statusCode}');
       yield LlmStreamEvent.error('API 返回 ${response.statusCode}');
       return;
     }
@@ -179,8 +207,6 @@ class MinimaxProvider implements LlmProvider {
     await for (final dataChunk in response.stream.transform(utf8.decoder)) {
       buf += dataChunk;
 
-      TalkerService.instance.llm('dataChunk[${dataChunk}] ');
-
       // 提取并处理所有完整的行
       while (!streamEnded) {
         final lineEnd = buf.indexOf('\n');
@@ -196,7 +222,7 @@ class MinimaxProvider implements LlmProvider {
         if (data == '[DONE]') {
           // [DONE] 仅作兼容性兜底，实际以 finish_reason 为准
           streamEnded = true;
-          TalkerService.instance.llmResp('[DONE] tokens=$tokenCount');
+          log.info('[DONE] tokens=$tokenCount');
           break;
         }
 
@@ -214,7 +240,7 @@ class MinimaxProvider implements LlmProvider {
         final reasoningText = delta?.reasoningContent;
 
         // 打印每个 chunk（不裁剪）
-        TalkerService.instance.llm(
+        log.debug(
           'CHUNK[${chunk.id}] '
           '${text ?? ""} '
           '${reasoningText != null ? "💭[${reasoningText}]" : ""} '
@@ -244,7 +270,7 @@ class MinimaxProvider implements LlmProvider {
         // 流结束：finish_reason 为 stop / tool_calls / length
         if (choice != null && choice.finishReason != null) {
           streamEnded = true;
-          TalkerService.instance.llmResp(
+          log.info(
             '[${choice.finishReason}] tokens=$tokenCount',
           );
           // 该 chunk 可能同时含 content
@@ -264,7 +290,7 @@ class MinimaxProvider implements LlmProvider {
                 arguments: toolArgsByIndex[entry.key] ?? '',
               ));
             }
-            TalkerService.instance.llmResp(
+            log.info(
               '🔧 工具调用 ${calls.length} 个：${calls.map((c) => c.name).join(', ')}',
             );
             yield LlmStreamEvent.toolCalls(calls);
@@ -293,7 +319,7 @@ class MinimaxProvider implements LlmProvider {
       yield LlmStreamEvent.toolCalls(calls);
     }
 
-    TalkerService.instance.llm('STREAM END (buffer exhausted)');
+    log.debug('STREAM END (buffer exhausted)');
     yield LlmStreamEvent.done(const LlmUsage());
   }
 

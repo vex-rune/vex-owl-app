@@ -114,7 +114,6 @@ class ApiConfig {
           configName == other.configName &&
           modelName == other.modelName &&
           apiEndpoint == other.apiEndpoint &&
-          apiKey == other.apiKey &&
           temperature == other.temperature &&
           topP == other.topP &&
           maxTokens == other.maxTokens &&
@@ -130,7 +129,6 @@ class ApiConfig {
         configName,
         modelName,
         apiEndpoint,
-        apiKey,
         temperature,
         topP,
         maxTokens,
@@ -146,4 +144,41 @@ class ApiConfig {
       'ApiConfig(id: $id, configName: $configName, modelName: $modelName, '
       'provider: $providerId, endpoint: $apiEndpoint, isDefault: $isDefault, '
       'maxCompletionTokens: $maxCompletionTokens, thinkingEnabled: $thinkingEnabled)';
+
+  // ── JSONL 序列化 ─────────────────────────────────────────────────────
+
+  /// 序列化为 JSON Map（用于 api_agents.jsonl）
+  Map<String, dynamic> toJsonl() => {
+        'providerId': providerId,
+        'configName': configName,
+        'modelName': modelName,
+        'apiEndpoint': apiEndpoint,
+        'apiKey': apiKey,
+        'temperature': temperature,
+        'topP': topP,
+        'maxTokens': maxTokens,
+        'maxCompletionTokens': maxCompletionTokens,
+        'thinkingEnabled': thinkingEnabled,
+        'isDefault': isDefault,
+        'enabled': enabled,
+      };
+
+  /// 从 JSON Map 反序列化
+  factory ApiConfig.fromJsonl(Map<String, dynamic> json) {
+    return ApiConfig(
+      id: json['id'] as int?,
+      configName: json['configName'] as String? ?? json['modelName'] as String? ?? '',
+      modelName: json['modelName'] as String? ?? '',
+      apiEndpoint: json['apiEndpoint'] as String? ?? '',
+      apiKey: json['apiKey'] as String? ?? '',
+      temperature: (json['temperature'] as num?)?.toDouble() ?? 0.7,
+      topP: (json['topP'] as num?)?.toDouble() ?? 1.0,
+      maxTokens: json['maxTokens'] as int? ?? 4096,
+      maxCompletionTokens: json['maxCompletionTokens'] as int? ?? 4096,
+      thinkingEnabled: json['thinkingEnabled'] as bool? ?? false,
+      isDefault: json['isDefault'] as bool? ?? false,
+      enabled: json['enabled'] as bool? ?? true,
+      providerId: json['providerId'] as String? ?? 'auto',
+    );
+  }
 }

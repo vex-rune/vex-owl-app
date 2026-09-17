@@ -107,8 +107,8 @@ class FileTools {
       if (root.isNotEmpty) {
         _rootPath = root;
       }
-    } catch (_) {
-      // ignore
+    } catch (e) {
+      // 获取根路径失败，将在后续操作中处理
     }
     return _rootPath;
   }

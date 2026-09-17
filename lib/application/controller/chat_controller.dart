@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/app_providers.dart';
 import '../../core/core.dart';
-import '../../core/util/talker_service.dart';
 import '../../core/prompt/ingest_prompt.dart' as ip;
 import '../../core/prompt/query_prompt.dart' as qp;
 import '../../data/llm/llm.dart';
@@ -19,12 +18,19 @@ import 'session_controller.dart';
 import 'settings_controller.dart';
 import 'provider_controller.dart';
 
-/// 聊天逻辑控制器（基于 ChangeNotifier + Riverpod）
+/// 聊天逻辑控制器（v6.4）
 ///
 /// 负责消息发送、真实 LLM 流式响应接收、上下文管理等核心聊天流程。
 /// 通过构造函数注入 [Ref]，再从 `app_providers` 中获取仓库与 [SessionController]。
+///
+/// v6.4 变更：
+/// - `_saveContext()` 改为调用 `ISessionRepository.appendMessages()`
+/// - 添加 `_sending` 标志位防止并发发送（C3）
+/// - 修复 `stopGeneration` 状态不一致：中断时将所有 streaming=true 的消息标记为 streaming=false（C4）
+/// - 修复 H3：自动命名只触发一次（用 `_named` 标志位）
 class ChatController extends ChangeNotifier {
   ChatController(this._ref) {
+    log.debug('初始化 ChatController');
     _sessionCtrl = _ref.read(sessionControllerProvider);
     _sessionCtrl.addListener(_onSessionChanged);
     _settingsCtrl = _ref.read(settingsControllerProvider);
@@ -65,30 +71,34 @@ class ChatController extends ChangeNotifier {
   late final ToolRegistry _toolRegistry;
 
   /// 异步探测 Wiki 根目录的绝对路径，注入到 FileTools。
-  ///
-  /// 通过 WikiRepository 的 [IWikiRepository.getRootPath] 获取（接口已扩展）。
   Future<void> _initToolRootPath(FileTools fileTools, wiki) async {
     try {
       final root = await wiki.getRootPath();
       if (root.isNotEmpty) {
         fileTools.setRootPath(root);
-        TalkerService.instance.chatInfo(
+        log.info(
           '🔧 FileTools 根目录已设置：$root',
         );
       }
     } catch (e) {
-      TalkerService.instance.chatInfo('⚠️ FileTools 根目录初始化失败：$e');
-      // 兜底：不设置根路径，工具调用会失败但不影响普通对话
+      log.info('⚠️ FileTools 根目录初始化失败：$e');
     }
   }
 
   // ── 内部可变状态 ──
 
-  /// 当前消息所属的会话 ID（用于判断会话是否真正切换）
+  /// 当前消息所属的会话 ID
   String? _currentSessionId;
 
   List<Message> _messages = const [];
   bool _isStreaming = false;
+
+  /// 修复 C3：发送锁，防止并发调用 sendMessage
+  bool _sending = false;
+
+  /// 修复 H3：自动命名标志位，防止重复触发
+  bool _named = false;
+
   int _inputTokenEstimate = 0;
   int _outputTokensUsed = 0;
   int _inputTokensUsed = 0;
@@ -129,70 +139,52 @@ class ChatController extends ChangeNotifier {
   }
 
   /// 当 SessionController 通知变化时检查是否真正切换了会话
-  ///
-  /// 只有会话 ID 改变时才清空消息列表，并从数据库加载该会话的历史消息。
-  /// 同一会话的重命名/归档等操作不会清空消息。
   void _onSessionChanged() {
     final newId = _sessionCtrl.currentSession?.id;
     if (newId != _currentSessionId) {
       _currentSessionId = newId;
       _inputTokenEstimate = 0;
-      // 异步加载该会话的历史消息
-      if (newId != null) {
-        _loadMessages(newId);
-      } else {
-        _messages = const [];
-        notifyListeners();
-      }
-    }
-  }
-
-  /// 从内存仓库加载指定会话的历史消息
-  Future<void> _loadMessages(String sessionId) async {
-    try {
-      Session? session;
-      for (final s in _sessionCtrl.sessions) {
-        if (s.id == sessionId) {
-          session = s;
-          break;
-        }
-      }
-      if (session == null || session.context.trim().isEmpty) {
-        _messages = const [];
-      } else {
-        _messages = Message.listFromJson(session.context);
-      }
-      notifyListeners();
-    } catch (e) {
-      debugPrint('加载历史消息失败：$e');
-      _messages = const [];
+      _named = false; // 重置自动命名标志
+      // 从 SessionController 同步消息（不再单独加载）
+      _messages = _sessionCtrl.currentMessages;
       notifyListeners();
     }
   }
 
-  /// 当设置（默认配置等）变更时通知 UI 刷新徽标
+  /// 当设置变更时通知 UI 刷新徽标
   void _onSettingsChanged() {
     notifyListeners();
   }
 
   /// 发送用户消息并获取 AI 回复
+  ///
+  /// 修复 C3：添加 `_sending` 锁，防止并发调用
   Future<void> sendMessage(String content) async {
     if (content.trim().isEmpty) return;
+
+    // 修复 C3：防止并发发送
+    if (_sending) {
+      log.info('⚠️ 上一条消息尚未发送完成');
+      return;
+    }
+    _sending = true;
 
     final session = _sessionCtrl.currentSession;
     if (session == null) {
       _lastError = '请先创建或选择一个会话';
       notifyListeners();
       onError?.call(_lastError!);
+      _sending = false;
       return;
     }
 
     final config = _settingsCtrl.defaultConfig;
     if (config == null) {
       _lastError = '请先在设置中添加并启用一个 API 配置';
-      TalkerService.instance.chatInfo('❌ 无默认配置，消息未发送');
+      log.info('❌ 无默认配置，消息未发送');
       notifyListeners();
       onError?.call(_lastError!);
+      _sending = false;
       return;
     }
 
@@ -204,7 +196,7 @@ class ChatController extends ChangeNotifier {
     // 2. Token 阈值告警（非阻塞）
     final tokens = TokenCounter.estimateTokens(content);
     if (tokens > _settingsCtrl.chatTokenThreshold) {
-      TalkerService.instance.chatInfo('⚠️ Token 超阈值 $tokens > ${_settingsCtrl.chatTokenThreshold}');
+      log.info('⚠️ Token 超阈值 $tokens > ${_settingsCtrl.chatTokenThreshold}');
       onWarning?.call(
           '本条消息约 $tokens tokens，超过阈值 ${_settingsCtrl.chatTokenThreshold}');
     }
@@ -217,16 +209,17 @@ class ChatController extends ChangeNotifier {
       content: content.trim(),
     );
     _messages = [..._messages, userMessage];
-    TalkerService.instance.chatInfo('📤 用户发送: "${content.trim().substring(0, content.trim().length > 30 ? 30 : content.trim().length)}${content.trim().length > 30 ? '...' : ''}"');
+    log.info('📤 用户发送: "${content.trim().substring(0, content.trim().length > 30 ? 30 : content.trim().length)}${content.trim().length > 30 ? '...' : ''}"');
     notifyListeners();
 
-    // 3. 首条消息触发 LLM 自动命名（fire-and-forget，不阻塞流式响应）
-    if (_messages.length == 1) {
-      TalkerService.instance.chat('🗓️ 首条消息，触发自动命名');
+    // 4. 修复 H3：首条消息触发 LLM 自动命名（只触发一次）
+    if (_messages.length == 1 && !_named) {
+      _named = true;
+      log.debug('🗓️ 首条消息，触发自动命名');
       unawaited(_autoNameSession(session.id, content.trim()));
     }
 
-    // 4. 创建助手消息占位（用于流式填充）
+    // 5. 创建助手消息占位（用于流式填充）
     final assistantMessage = Message.assistant(
       sessionId: session.id,
       content: '',
@@ -236,12 +229,11 @@ class ChatController extends ChangeNotifier {
     _streamCancelToken = Completer<void>();
     notifyListeners();
 
-    // 5. 解析 Provider 并启动流式调用（带工具调用循环）
+    // 6. 解析 Provider 并启动流式调用（带工具调用循环）
     final provider = _providerCtrl.resolveProvider(config);
     final tools = _toolRegistry.listDefinitions();
 
     try {
-      // 工具调用循环：最多 _maxToolRounds 轮
       for (var round = 0; round < _maxToolRounds; round++) {
         final systemPrompt = await _buildSystemPrompt();
         final contextMessages = _buildContextMessages();
@@ -254,23 +246,19 @@ class ChatController extends ChangeNotifier {
           tools: tools,
         );
 
-        // 如果本轮没有工具调用 → 结束循环
         if (toolCallsThisRound.isEmpty) break;
 
-        TalkerService.instance.chat(
+        log.debug(
           '🔧 第 ${round + 1} 轮工具调用：${toolCallsThisRound.map((c) => c.name).join(', ')}',
         );
 
-        // 把工具调用记录为「工具卡片」消息
         _appendToolCallMessages(toolCallsThisRound);
 
-        // 顺序执行工具（并行有依赖风险，简单场景串行即可）
         for (final call in toolCallsThisRound) {
           final result = await _toolRegistry.execute(call);
           _appendToolResultMessage(result);
         }
 
-        // 准备下一轮：创建新的助手占位
         _messages = [
           ..._messages,
           Message.assistant(sessionId: session.id, content: '').copyWith(streaming: true),
@@ -282,17 +270,24 @@ class ChatController extends ChangeNotifier {
     } finally {
       _isStreaming = false;
       _streamCancelToken = null;
-      // 关闭流式占位标志
+      _sending = false; // 修复 C3：释放发送锁
+
+      // 修复 C4：关闭所有流式占位标志
       final updated = [..._messages];
+      for (var i = 0; i < updated.length; i++) {
+        if (updated[i].streaming) {
+          updated[i] = updated[i].copyWith(streaming: false);
+        }
+      }
       final lastIdx = updated.length - 1;
       if (lastIdx >= 0) {
         final finalContent = updated[lastIdx].content;
-        updated[lastIdx] = updated[lastIdx].copyWith(streaming: false);
-        TalkerService.instance.chatInfo('✅ 流式完成，回复 "${finalContent.length > 40 ? '${finalContent.substring(0, 40)}...' : finalContent}"');
+        log.info('✅ 流式完成，回复 "${finalContent.length > 40 ? '${finalContent.substring(0, 40)}...' : finalContent}"');
       }
       _messages = updated;
       notifyListeners();
-      // 6. 保存上下文到会话
+
+      // 7. 保存上下文到会话（v6.4：追加消息到 JSONL）
       await _saveContext(session.id);
     }
   }
@@ -316,7 +311,6 @@ class ChatController extends ChangeNotifier {
         if (_streamCancelToken?.isCompleted == true) break;
         if (event.toolCalls != null && event.toolCalls!.isNotEmpty) {
           toolCalls.addAll(event.toolCalls!);
-          // 不应用事件（交给循环外统一处理），但要消费
           continue;
         }
         _applyStreamEvent(event);
@@ -327,27 +321,12 @@ class ChatController extends ChangeNotifier {
     return toolCalls;
   }
 
-  /// 在消息列表中追加一条「工具调用卡片」消息（仅记录元数据，用于 UI 显示）
-  /// 旧实现：单独插入 assistant 消息。但 OpenAI 协议要求 assistant 与 tool 消息配对，
-  /// 因此改为就地更新最后一条 assistant 占位（见 [_appendToolCallMessages] 重载）。
-  /// 保留此函数仅为 API 占位（已弃用）。
-  @Deprecated('已合并到 _appendToolCallMessages 的就地更新逻辑')
-  void _appendToolCallMessagesLegacy(List<LlmToolCall> calls) {
-    _appendToolCallMessages(calls);
-  }
-
-  /// 把工具调用绑定到最后一条 assistant 占位消息（替换文本，携带 toolCalls）
-  ///
-  /// 关键：必须就地修改同一 Message 对象，确保下一轮 LLM 调用时该消息
-  /// 携带 `tool_calls` 字段（OpenAI 协议要求 assistant 消息带 tool_calls 时，
-  /// 必须紧跟 role: tool 消息带相同 tool_call_id）。
+  /// 把工具调用绑定到最后一条 assistant 占位消息
   void _appendToolCallMessages(List<LlmToolCall> calls) {
     if (calls.isEmpty) return;
     final session = _sessionCtrl.currentSession;
     if (session == null) return;
 
-    // 把最后一条 assistant 消息标记为「携带 toolCalls」，content 保持为空。
-    // 工具调用摘要由 UI 层根据 toolCalls 字段折叠渲染，不再拼进 content。
     final updated = [..._messages];
     final lastIdx = updated.length - 1;
     if (lastIdx >= 0 && updated[lastIdx].role == MessageRole.assistant) {
@@ -362,9 +341,6 @@ class ChatController extends ChangeNotifier {
   }
 
   /// 把工具执行结果作为 tool 消息追加到消息列表
-  ///
-  /// 注意：tool 消息必须紧跟在携带 toolCalls 的 assistant 消息之后，
-  /// 且 tool_call_id 必须与上一条 assistant 消息中的 tool_call.id 对应。
   void _appendToolResultMessage(ToolResult result) {
     final session = _sessionCtrl.currentSession;
     if (session == null) return;
@@ -381,16 +357,12 @@ class ChatController extends ChangeNotifier {
   }
 
   /// 构建系统提示词
-  ///
-  /// 组合：人格 + Wiki 索引 + 可用工具描述
   Future<String> _buildSystemPrompt() async {
     final buf = StringBuffer();
 
-    // 1. 人格提示词
     buf.writeln(qp.querySystemPrompt);
     buf.writeln();
 
-    // 2. Wiki 索引（让 LLM 看到知识库的整体结构）
     try {
       final wikiRepo = _ref.read(wikiRepositoryProvider);
       final index = await wikiRepo.readIndex();
@@ -402,11 +374,10 @@ class ChatController extends ChangeNotifier {
         buf.writeln('> 你可以使用 read_file 工具读取某个页面的完整内容。');
         buf.writeln();
       }
-    } catch (_) {
-      // 索引读取失败不阻塞
+    } catch (e) {
+      log.info('⚠️ 构建 Wiki 索引失败: $e');
     }
 
-    // 3. 工具描述（不支持原生 function calling 的 Provider 会靠这段文本理解）
     buf.writeln(_toolRegistry.toSystemPromptDescription());
 
     return buf.toString();
@@ -415,7 +386,7 @@ class ChatController extends ChangeNotifier {
   /// 应用单条流式事件到消息列表
   void _applyStreamEvent(LlmStreamEvent event) {
     if (event.error != null) {
-      TalkerService.instance.chatInfo('❌ 流式错误: ${event.error}');
+      log.info('❌ 流式错误: ${event.error}');
       final updated = [..._messages];
       final lastIdx = updated.length - 1;
       if (lastIdx >= 0) {
@@ -464,8 +435,7 @@ class ChatController extends ChangeNotifier {
     }
   }
 
-  /// 构建发送给 LLM 的上下文：从 [_messages] 中按配置的 maxMessages 截取尾部；
-  /// 若最后一条是助手（占位符），则剔除以避免重复发送。
+  /// 构建发送给 LLM 的上下文
   List<Message> _buildContextMessages() {
     final usable = _messages
         .where((m) =>
@@ -506,7 +476,6 @@ class ChatController extends ChangeNotifier {
       throw '命名结果为空或过长';
     } catch (e) {
       debugPrint('自动命名失败：$e');
-      // 回退到截取前 15 字
       final fallback = firstMessage.length > 15
           ? firstMessage.substring(0, 15)
           : firstMessage;
@@ -515,9 +484,21 @@ class ChatController extends ChangeNotifier {
   }
 
   /// 停止当前正在进行的生成
+  ///
+  /// 修复 C4：将所有 streaming=true 的消息标记为 streaming=false
   void stopGeneration() {
     _streamCancelToken?.complete();
     _isStreaming = false;
+    _sending = false; // 修复 C3：释放发送锁
+
+    // 修复 C4：中断时将所有流式消息标记为非流式
+    final updated = [..._messages];
+    for (var i = 0; i < updated.length; i++) {
+      if (updated[i].streaming) {
+        updated[i] = updated[i].copyWith(streaming: false);
+      }
+    }
+    _messages = updated;
     notifyListeners();
   }
 
@@ -525,11 +506,12 @@ class ChatController extends ChangeNotifier {
   void clearContext() {
     _messages = const [];
     _inputTokenEstimate = 0;
+    _named = false; // 重置自动命名标志
     notifyListeners();
 
     final session = _sessionCtrl.currentSession;
     if (session != null) {
-      _sessionCtrl.updateSessionContext(session.id, '');
+      _sessionCtrl.setMessages(const []);
     }
   }
 
@@ -545,21 +527,18 @@ class ChatController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 保存当前消息上下文（JSON 格式）+ 按需触发压缩
+  /// 保存当前消息上下文（v6.4：追加消息到 messages.jsonl）
   ///
-  /// 流程：
-  /// 1. 截取非流式消息尾部（按配置的 maxMessages）
-  /// 2. 检测是否需要压缩（超限 + 策略 != nolimit）
-  /// 3. 若需压缩 → 异步触发 ContextCompressor（fire-and-forget）
-  /// 4. 保存截断后的消息到内存仓库
+  /// 修复 C2：不再使用 JSON 字符串，改为追加到 JSONL 文件
   Future<void> _saveContext(String sessionId) async {
+    // 只保存非流式消息（排除正在生成的最后一条）
     final nonStreaming = _messages.where((m) => !m.streaming).toList();
-    final maxMessages = _settingsCtrl.settings.context.maxMessages;
-    final tail = nonStreaming.length > maxMessages
-        ? nonStreaming.sublist(nonStreaming.length - maxMessages)
-        : nonStreaming;
-    final jsonStr = jsonEncode(tail.map((m) => m.toJson()).toList());
-    await _sessionCtrl.updateSessionContext(sessionId, jsonStr);
+
+    // 追加到会话存储（高性能）
+    await _sessionCtrl.appendMessages(sessionId, nonStreaming);
+
+    // 同步到 SessionController 的 currentMessages
+    _sessionCtrl.setMessages(nonStreaming);
 
     // 检查是否需要压缩（异步执行，不阻塞主流程）
     final session = _sessionCtrl.currentSession;

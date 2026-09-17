@@ -11,6 +11,8 @@ export 'model/llm_tool_call.dart';
 export 'model/message.dart';
 export 'model/session.dart';
 export 'model/wiki_page.dart';
+export 'model/wiki_file.dart';
+export 'model/wiki_front_matter.dart';
 
 // 提示词模板
 export 'prompt/ingest_prompt.dart';
@@ -20,3 +22,4 @@ export 'prompt/memory_prompt.dart';
 
 // 工具类
 export 'util/token_counter.dart';
+export 'util/talker_service.dart';

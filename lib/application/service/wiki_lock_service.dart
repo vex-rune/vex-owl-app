@@ -1,7 +1,7 @@
-/// Wiki 文件锁服务（v5.0）
+/// Wiki 文件锁服务（v6.4）
 ///
-/// 基于 `wiki/.meta/wiki.lock` 的简单文件锁：
-/// - 写入 Wiki 文件前必须 `acquire`（带 TTL，默认 5 分钟）
+/// 基于 `.owl/.meta/wiki.lock` 的简单文件锁：
+/// - 写入文件前必须 `acquire`（带 TTL，默认 5 分钟）
 /// - 写入完成后立即 `release`
 /// - TTL 过期自动失效（防崩溃遗留死锁）
 /// - 同一时刻只允许一个写者；多个读者可并发
@@ -25,7 +25,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-import '../../core/util/talker_service.dart';
+import '../../core/core.dart';
 
 /// 锁持有者类型
 enum LockOwner {
@@ -100,16 +100,16 @@ class WikiLockException implements Exception {
 
 /// Wiki 文件锁服务
 class WikiLockService {
-  WikiLockService(this._wikiRoot);
+  WikiLockService(this._owlRoot);
 
-  /// Wiki 根目录绝对路径（含 `.owl/wiki/` 或 `llm-wiki/wiki/`）
-  final String _wikiRoot;
+  /// Owl 根目录绝对路径（`.owl/`）
+  final String _owlRoot;
 
   /// 默认锁 TTL（5 分钟）
   static const Duration defaultTtl = Duration(minutes: 5);
 
-  /// 锁文件路径
-  String get _lockPath => p.join(_wikiRoot, '.meta', 'wiki.lock');
+  /// 锁文件路径（`.owl/.meta/wiki.lock`）
+  String get _lockPath => p.join(_owlRoot, '.meta', 'wiki.lock');
 
   /// 短暂内存缓存：上次持有的 lockId（避免重入）
   String? _lastLockId;
@@ -162,7 +162,7 @@ class WikiLockService {
         await _writeLockAtomic(newLock);
         _lastLockId = newLock.lockId;
         _lastLockAt = newLock.acquiredAt;
-        TalkerService.instance.wiki(
+        log.debug(
           '🔒 锁已获取：${owner.value} / $operation (ttl=${ttl.inSeconds}s)',
         );
         return newLock;
@@ -187,7 +187,7 @@ class WikiLockService {
     final existing = await readLock();
     if (existing == null) return;
     if (existing.lockId != lock.lockId) {
-      TalkerService.instance.wiki(
+      log.debug(
         '⚠️ 释放锁失败：lockId 不匹配（当前=${existing.lockId}，要释放=${lock.lockId}）',
       );
       return;
@@ -197,9 +197,9 @@ class WikiLockService {
       if (await file.exists()) await file.delete();
       _lastLockId = null;
       _lastLockAt = null;
-      TalkerService.instance.wiki('🔓 锁已释放：${lock.operation}');
+      log.debug('🔓 锁已释放：${lock.operation}');
     } catch (e) {
-      TalkerService.instance.wiki('⚠️ 释放锁异常：$e');
+      log.debug('⚠️ 释放锁异常：$e');
     }
   }
 
@@ -227,7 +227,7 @@ class WikiLockService {
       try {
         final file = File(_lockPath);
         if (await file.exists()) await file.delete();
-        TalkerService.instance.wiki('🧹 已清理过期锁：${existing.operation}');
+        log.debug('🧹 已清理过期锁：${existing.operation}');
       } catch (_) {
         // ignore
       }

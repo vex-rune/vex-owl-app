@@ -77,7 +77,7 @@ class FrontMatter {
 class MarkdownParser {
   /// 解析 front-matter（`---\n...\n---\n`），返回剩余正文
   static (FrontMatter, String) parseFrontMatter(String content) {
-    final lines = const LineSplitter().convert(content);
+    final lines = const OwlLineSplitter().convert(content);
     if (lines.isEmpty || lines.first.trim() != '---') {
       return (FrontMatter(), content);
     }
@@ -116,7 +116,7 @@ class MarkdownParser {
   /// 解析正文，按 `## 段名` 划分段落
   static List<MarkdownSection> parseSections(String body) {
     final result = <MarkdownSection>[];
-    final lines = const LineSplitter().convert(body);
+    final lines = const OwlLineSplitter().convert(body);
 
     String? currentTitle;
     final currentEntries = <KvEntry>[];
@@ -178,9 +178,9 @@ class MarkdownWriter {
   }
 }
 
-/// LineSplitter 复用 dart:convert 以避免重复实现
-class LineSplitter {
-  const LineSplitter();
+/// OwlLineSplitter 复用 dart:convert 以避免重复实现
+class OwlLineSplitter {
+  const OwlLineSplitter();
   List<String> convert(String input) =>
       input.split(RegExp(r'\r\n|\r|\n'));
 }

@@ -5,6 +5,7 @@ import '../../data/repository/i_wiki_repository.dart';
 import '../../data/repository/wiki_repository.dart';
 
 // re-export from permission_onboarding for global access
+// v6.4: 修复 H1，移除 presentation 层反向导出（改为直接从 presentation 导入）
 export '../../presentation/widgets/permission_onboarding.dart'
     show permissionOnboardedProvider;
 
@@ -30,24 +31,14 @@ final themeModeProvider =
   (ref) => ThemeModeController(),
 );
 
-/// 全局 Riverpod Providers
+/// 全局 Riverpod Providers（v6.4）
 ///
-/// 集中声明仓库与常用状态 Provider。
-/// 控制器通过 `ref.read(...)` 在构造时获取依赖，避免直接使用 GetX。
-///
-/// Wiki 仓库职责（v5）：
-/// - 根目录：`<appDocs>/.owl/wiki/`
-/// - `.meta/` — 私有目录（wiki.lock + export-meta.json + .audit.log）
-/// - `.backup/` — 自动备份目录
-/// - `schema.md` — LLM 编写规则（不可变）
-/// - `index.md` — 人类可读展示目录
-/// - `profile.md` — 用户画像
-/// - `todos/todo-{uuid}.md` — 多文件待办（v5 新增）
-/// - `sessions/{sessionId}.md` — 短期记忆 + 摘要（v5 改名）
-/// - `concepts/{entityId}.md` — 长期知识
-/// - `raw/` — 原始素材（只读）
-/// - `context-settings.md` — 应用设置
-/// - `api-configs.md` — API 配置（含加密 Key）
+/// Wiki 仓库（v6.4）：
+/// - 根目录使用 `OwlRoot.instance.wikiDir`
+/// - 文件锁在 `.owl/.meta/wiki.lock`（由 WikiLockService 管理）
+/// - 会话存储在 `.owl/sessions/{id}/`（JSONL 格式，由 FileSessionRepository 管理）
+/// - 配置存储在 `.owl/config/`（JSONL 格式，由 ConfigStorage 管理）
+/// - Wiki 页面仍在 `.owl/wiki/`（Markdown 格式）
 final wikiRepositoryProvider = Provider<IWikiRepository>((ref) {
   return WikiRepository();
 });

@@ -167,6 +167,17 @@ class SessionController extends ChangeNotifier {
     await renameSession(id, name);
   }
 
+  /// 切换会话顶置状态
+  ///
+  /// 若已顶置则取消，否则设为顶置。
+  Future<void> togglePin(String id) async {
+    final s = _repo.getById(id);
+    if (s == null) return;
+    await _repo.setPinned(id, !s.pinned);
+    _sessions = _repo.listAll();
+    notifyListeners();
+  }
+
   /// 更新会话上下文（供 ChatController 等调用）
   Future<void> updateSessionContext(String id, String context) async {
     try {

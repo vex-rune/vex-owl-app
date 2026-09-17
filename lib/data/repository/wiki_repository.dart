@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import '../../application/parser/api_configs_parser.dart';
 import '../../application/parser/context_settings_parser.dart';
 import '../../application/service/wiki_file_writer.dart';
 import '../../application/service/wiki_lock_service.dart';
@@ -271,14 +270,10 @@ LLM 创建新页面后，仅在正文与 front-matter 中维护内容，索引�
       await profileFile.writeAsString(_defaultProfile);
     }
 
-    // 5. 兼容旧版 context-settings.md / api-configs.md
+    // 5. 兼容旧版 context-settings.md
     final settingsFile = File(p.join(root, 'context-settings.md'));
     if (!await settingsFile.exists()) {
       await settingsFile.writeAsString(ContextSettingsParser.defaultContent());
-    }
-    final apiConfigsFile = File(p.join(root, 'api-configs.md'));
-    if (!await apiConfigsFile.exists()) {
-      await apiConfigsFile.writeAsString(ApiConfigsParser.defaultContent());
     }
 
     // 6. 清理过期锁
@@ -444,32 +439,29 @@ LLM 创建新页面后，仅在正文与 front-matter 中维护内容，索引�
     return file.exists();
   }
 
-  // ───────────────────────── API 配置文件 ─────────────────────────
+  // ───────────────────────── Agent 配置（每模型独立配置） ─────────────────────────
 
-  Future<File> _apiConfigsFile() async {
-    final root = await _root;
-    return File(p.join(root, 'api-configs.md'));
+  /// 从 `.meta/export-meta.json` 读取 `api_agents` 列表
+  /// 不存在或为空时返回空 List（调用方按 provider.supportedModels 初始化）
+  @override
+  Future<List<Map<String, dynamic>>> readAgentConfigsJson() async {
+    final meta = await readExportMeta();
+    final list = meta?['api_agents'];
+    if (list is List) {
+      return list
+          .whereType<Map<String, dynamic>>()
+          .toList(growable: false);
+    }
+    return const <Map<String, dynamic>>[];
   }
 
+  /// 把 Agent 列表写回 `.meta/export-meta.json`
   @override
-  Future<String?> readApiConfigs() async {
-    final file = await _apiConfigsFile();
-    if (!await file.exists()) return null;
-    return file.readAsString();
-  }
-
-  @override
-  Future<void> writeApiConfigs(String content) async {
-    final file = await _apiConfigsFile();
-    final parent = file.parent;
-    if (!await parent.exists()) await parent.create(recursive: true);
-    await file.writeAsString(content, flush: true);
-  }
-
-  @override
-  Future<bool> apiConfigsExists() async {
-    final file = await _apiConfigsFile();
-    return file.exists();
+  Future<void> writeAgentConfigsJson(List<Map<String, dynamic>> agents) async {
+    final meta = await readExportMeta() ?? <String, dynamic>{};
+    meta['api_agents'] = agents;
+    meta['api_agents_updated_at'] = DateTime.now().toUtc().toIso8601String();
+    await writeExportMeta(meta);
   }
 
   // ───────────────────────── Todos 多文件 API ─────────────────────────

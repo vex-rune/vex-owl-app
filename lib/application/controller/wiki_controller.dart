@@ -27,6 +27,10 @@ class WikiController extends ChangeNotifier {
   List<String> _todoFiles = const [];
   List<String> _archivedTodoFiles = const [];
 
+  /// 每个 wiki 页面的元数据缓存（updatedAt / title / description / starred）
+  /// key 是相对路径（wikiPages / rawFiles / todoFiles 中的元素）。
+  final Map<String, WikiPageMeta> _pageMetas = {};
+
   // ── Getters ──
 
   String get indexContent => _indexContent;
@@ -35,6 +39,15 @@ class WikiController extends ChangeNotifier {
   String? get currentPage => _currentPage;
   List<String> get todoFiles => _todoFiles;
   List<String> get archivedTodoFiles => _archivedTodoFiles;
+
+  /// 取指定文件的元数据（懒加载：首次访问触发读取）
+  WikiPageMeta? metaOf(String relativePath) => _pageMetas[relativePath];
+
+  /// 已收藏的文件相对路径列表（todos / wiki pages / raw files）
+  List<String> get starredPaths => _pageMetas.entries
+      .where((e) => e.value.starred)
+      .map((e) => e.key)
+      .toList();
 
   /// 加载 Wiki 数据
   Future<void> loadWiki() async {
@@ -45,9 +58,56 @@ class WikiController extends ChangeNotifier {
       _todoFiles = await _repo.listTodoFiles();
       _archivedTodoFiles = await _repo.listTodoFiles(includeArchived: true)
         ..removeWhere((f) => _todoFiles.contains(f));
+
+      // 清空旧元数据缓存并异步刷新
+      _pageMetas.clear();
+      await _refreshAllMetas();
       notifyListeners();
     } catch (e) {
       debugPrint('加载知识库失败：$e');
+    }
+  }
+
+  /// 异步解析所有可见文件的元数据（front-matter + 文件 mtime）。
+  Future<void> _refreshAllMetas() async {
+    final candidates = <String>[
+      ..._wikiPages.where((p) => !p.startsWith('todos/')),
+      ..._todoFiles,
+      ..._rawFiles,
+    ];
+    await Future.wait(
+      candidates.map((p) async {
+        final m = await _loadMeta(p);
+        if (m != null) _pageMetas[p] = m;
+      }),
+    );
+  }
+
+  /// 读取并解析单个文件的元数据（容错：失败时仅返回基于 mtime 的占位值）
+  Future<WikiPageMeta?> _loadMeta(String relativePath) async {
+    try {
+      final raw = await _repo.readPage(relativePath);
+      final (fm, _) = WikiFrontMatter.parse(raw);
+      return WikiPageMeta(
+        title: fm.title.isNotEmpty
+            ? fm.title
+            : relativePath.split('/').last.replaceAll('.md', ''),
+        description: fm.description,
+        updatedAt: fm.updatedAt,
+        starred: fm.extras['starred'] == true,
+      );
+    } catch (e) {
+      debugPrint('解析 front-matter 失败：$relativePath / $e');
+      return null;
+    }
+  }
+
+  /// 主动刷新单个文件元数据（写入 / 删除 / 收藏切换后调用）
+  Future<void> refreshMetaOf(String relativePath) async {
+    final m = await _loadMeta(relativePath);
+    if (m != null) {
+      _pageMetas[relativePath] = m;
+      notifyListeners();
     }
   }
 
@@ -184,6 +244,7 @@ class WikiController extends ChangeNotifier {
         frontMatterExtras: updated.extras,
       );
       notifyListeners();
+      await refreshMetaOf(fileName);
     } catch (e) {
       debugPrint('更新 todo 失败：$e');
     }
@@ -234,9 +295,99 @@ class WikiController extends ChangeNotifier {
     final seed = ts.hashCode.abs().toRadixString(36);
     return '$ts-$seed';
   }
+
+  // ── 收藏 / 重命名（v6.1 新增） ──
+
+  /// 切换文件收藏状态（在 front-matter extras 中写入 starred）
+  Future<void> toggleStarred(String relativePath) async {
+    try {
+      final raw = await _repo.readPage(relativePath);
+      final (fm, body) = WikiFrontMatter.parse(raw);
+      final current = fm.extras['starred'] == true;
+      final newExtras = <String, dynamic>{
+        ...fm.extras,
+        'starred': !current,
+        if (!current) 'starred_at': DateTime.now().toUtc().toIso8601String(),
+      };
+      // 取消收藏时移除 starred_at，便于以后扩展
+      if (current) newExtras.remove('starred_at');
+
+      final updatedFm = fm.copyWith(extras: newExtras);
+      await _writeBack(relativePath, updatedFm, body);
+      await refreshMetaOf(relativePath);
+    } catch (e) {
+      debugPrint('切换收藏失败：$relativePath / $e');
+    }
+  }
+
+  /// 重命名 Wiki 页面（同步刷新内部索引与元数据缓存）
+  Future<void> renameWikiPage(String oldName, String newName) async {
+    if (oldName == newName) return;
+    try {
+      await _repo.renamePage(oldName, newName);
+      // 同步更新本地缓存
+      _wikiPages = [
+        for (final p in _wikiPages) p == oldName ? newName : p,
+      ];
+      if (_pageMetas.containsKey(oldName)) {
+        final m = _pageMetas.remove(oldName)!;
+        _pageMetas[newName] = m;
+      }
+      if (_currentPage == oldName) _currentPage = newName;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('重命名失败：$oldName → $newName / $e');
+    }
+  }
+
+  /// 按路径把更新后的 front-matter 写回文件（区分 todo / 普通 wiki）
+  Future<void> _writeBack(
+    String relativePath,
+    WikiFrontMatter fm,
+    String body,
+  ) async {
+    if (relativePath.startsWith('todos/')) {
+      await _repo.writeTodo(relativePath, body, frontMatterExtras: fm.extras);
+    } else {
+      final newRaw = '${fm.serialize()}\n$body';
+      await _repo.writePage(relativePath, newRaw);
+    }
+  }
 }
 
 /// Riverpod Provider：暴露 [WikiController]
 final wikiControllerProvider = ChangeNotifierProvider<WikiController>(
   (ref) => WikiController(ref),
 );
+
+/// Wiki 文件元数据快照（v6.1 新增）
+///
+/// 由 [WikiController] 在 `loadWiki` 时统一从 front-matter 解析后缓存，
+/// 供 UI 层在不重新读盘的前提下展示标题 / 摘要 / 更新时间 / 收藏状态。
+class WikiPageMeta {
+  const WikiPageMeta({
+    required this.title,
+    required this.description,
+    required this.updatedAt,
+    required this.starred,
+  });
+
+  final String title;
+  final String description;
+  final DateTime updatedAt;
+  final bool starred;
+
+  WikiPageMeta copyWith({
+    String? title,
+    String? description,
+    DateTime? updatedAt,
+    bool? starred,
+  }) {
+    return WikiPageMeta(
+      title: title ?? this.title,
+      description: description ?? this.description,
+      updatedAt: updatedAt ?? this.updatedAt,
+      starred: starred ?? this.starred,
+    );
+  }
+}

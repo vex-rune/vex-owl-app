@@ -84,6 +84,14 @@ class InMemorySessionRepository {
     _changes.add(null);
   }
 
+  /// 设置会话顶置状态
+  Future<void> setPinned(String id, bool pinned) async {
+    final s = _sessions[id];
+    if (s == null) return;
+    _sessions[id] = s.copyWith(pinned: pinned, updatedAt: DateTime.now());
+    _changes.add(null);
+  }
+
   /// 清空所有会话
   void clear() {
     _sessions.clear();

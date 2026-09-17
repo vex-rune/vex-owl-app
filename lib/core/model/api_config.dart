@@ -21,6 +21,7 @@ class ApiConfig {
     this.maxCompletionTokens = 4096,
     this.thinkingEnabled = false,
     this.isDefault = false,
+    this.enabled = true,
     this.providerId = 'auto',
   });
 
@@ -57,6 +58,9 @@ class ApiConfig {
   /// 是否为默认配置
   final bool isDefault;
 
+  /// 是否启用（v6.2 新增：每个模型独立 Agent，未配置 API Key 的可被禁用）
+  final bool enabled;
+
   /// Provider 标识（'auto' / 'minimax' / 'openai' / 自定义）
   final String providerId;
 
@@ -75,6 +79,7 @@ class ApiConfig {
     int? maxCompletionTokens,
     bool? thinkingEnabled,
     bool? isDefault,
+    bool? enabled,
     String? providerId,
   }) {
     return ApiConfig(
@@ -89,6 +94,7 @@ class ApiConfig {
       maxCompletionTokens: maxCompletionTokens ?? this.maxCompletionTokens,
       thinkingEnabled: thinkingEnabled ?? this.thinkingEnabled,
       isDefault: isDefault ?? this.isDefault,
+      enabled: enabled ?? this.enabled,
       providerId: providerId ?? this.providerId,
     );
   }
@@ -115,6 +121,7 @@ class ApiConfig {
           maxCompletionTokens == other.maxCompletionTokens &&
           thinkingEnabled == other.thinkingEnabled &&
           isDefault == other.isDefault &&
+          enabled == other.enabled &&
           providerId == other.providerId;
 
   @override
@@ -130,6 +137,7 @@ class ApiConfig {
         maxCompletionTokens,
         thinkingEnabled,
         isDefault,
+        enabled,
         providerId,
       );
 

@@ -10,6 +10,11 @@ import '../../../core/core.dart';
 /// - `thinking`：控制是否启用深度思考
 /// - `reasoning_effort`：控制思考力度（low / medium / high）
 ///
+/// 重要约束（v6.2 修复 400）：
+/// - 启用思考时**不能**同时设置 `temperature` / `top_p` 与 `reasoning_effort`，
+///   否则 DeepSeek 返回 400。把 temperature / topP 改为可空，启用思考时不传。
+/// - 启用思考时 `max_tokens` 在部分模型上需改用 `max_completion_tokens`。
+///
 /// 支持模型：deepseek-chat, deepseek-reasoner, deepseek-flash, deepseek-v4-pro
 class DeepSeekRequest {
   const DeepSeekRequest({
@@ -17,8 +22,8 @@ class DeepSeekRequest {
     required this.messages,
     this.stream = true,
     this.maxTokens = 4096,
-    this.temperature = 1.0,
-    this.topP = 0.95,
+    this.temperature,
+    this.topP,
     this.tools,
     this.toolChoice,
     this.thinking,
@@ -32,8 +37,8 @@ class DeepSeekRequest {
   final List<Message> messages;
   final bool stream;
   final int maxTokens;
-  final double temperature;
-  final double topP;
+  final double? temperature;
+  final double? topP;
   final List<Map<String, dynamic>>? tools;
   final Object? toolChoice;
 
@@ -52,11 +57,13 @@ class DeepSeekRequest {
       'messages': _serializeMessages(),
       'stream': stream,
       'max_tokens': maxTokens,
-      'temperature': temperature,
-      'top_p': topP,
     };
-    if (thinking != null) body['thinking'] = thinking;
+    // DeepSeek 启用思考时禁止同时设 temperature/top_p 与 reasoning_effort
+    // 未启用思考时正常传入
+    if (temperature != null) body['temperature'] = temperature;
+    if (topP != null) body['top_p'] = topP;
     if (reasoningEffort != null) body['reasoning_effort'] = reasoningEffort;
+    if (thinking != null) body['thinking'] = thinking;
     if (tools != null && tools!.isNotEmpty) {
       body['tools'] = tools;
       if (toolChoice != null) body['tool_choice'] = toolChoice;

@@ -68,11 +68,13 @@ abstract class IWikiRepository {
   Future<void> writeContextSettings(String content);
   Future<bool> contextSettingsExists();
 
-  // ── API 配置文件（wiki/api-configs.md，保留旧兼容） ──
+  // ── Agent 配置（每个模型 = 独立 Agent，存到 export-meta.json） ──
 
-  Future<String?> readApiConfigs();
-  Future<void> writeApiConfigs(String content);
-  Future<bool> apiConfigsExists();
+  /// 从 `.meta/export-meta.json.api_agents` 读取 Agent 列表
+  Future<List<Map<String, dynamic>>> readAgentConfigsJson();
+
+  /// 把 Agent 列表写回 `.meta/export-meta.json.api_agents`
+  Future<void> writeAgentConfigsJson(List<Map<String, dynamic>> agents);
 
   // ── 多文件 Todos API（v5.0 新增） ──
 

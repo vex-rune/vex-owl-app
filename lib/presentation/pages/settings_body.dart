@@ -3,23 +3,23 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/controller/provider_controller.dart';
 import '../../application/controller/settings_controller.dart';
-import '../../application/providers/app_providers.dart';
 import '../../core/core.dart';
 import '../../core/permission/permission_manager.dart';
 import '../../data/llm/llm.dart';
 import '../../design_system/design_system.dart';
 import '../widgets/widgets.dart';
 
-/// 设置页 Body 内容
+/// 设置页 Body 内容（v6.3：逐个添加 Agent）
 ///
 /// 基于 Riverpod ChangeNotifierProvider，所有开关状态绑定到 [SettingsController]。
 /// 不包含 Scaffold/AppBar，由 HomePage Shell 统一管理。
 ///
-/// API 配置区域：
-/// - 按 Provider 分组展示
-/// - "添加配置"对话框包含供应商下拉（来自 [LlmProviderRegistry]）
-/// - 模型预设自动填充 endpoint / modelName
-/// - 每条配置：设为默认 / 测试连接 / 编辑 / 删除
+/// API 配置区域（v6.3 重写）：
+/// - 按 Provider 分组（minimax / deepseek / mimo / openai）
+/// - 每个 Provider 卡片底部有「添加 Agent」按钮，弹出该 Provider 尚未添加的模型列表
+/// - 用户点击某个 Agent 可编辑 endpoint / apiKey / 温度 / topP / max_tokens / thinking
+/// - 长按 Agent 可删除
+/// - 「设为默认」= 当前对话默认使用这个 Agent
 class SettingsBody extends ConsumerStatefulWidget {
   const SettingsBody({super.key});
 
@@ -28,11 +28,13 @@ class SettingsBody extends ConsumerStatefulWidget {
 }
 
 class _SettingsBodyState extends ConsumerState<SettingsBody> {
-  /// 行级测试状态：id -> 是否正在测试
-  final Set<int> _testing = <int>{};
+  /// 行级测试状态：key = providerId::modelName
+  final Set<String> _testing = <String>{};
 
-  /// 行级测试结果缓存：id -> (success, message)
-  final Map<int, _TestResult> _testResults = <int, _TestResult>{};
+  /// 行级测试结果缓存：key -> (success, message)
+  final Map<String, _TestResult> _testResults = <String, _TestResult>{};
+
+  String _agentKey(ApiConfig a) => '${a.providerId}::${a.modelName}';
 
   @override
   Widget build(BuildContext context) {
@@ -45,10 +47,10 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
         // ── 权限管理 ──
         _buildPermissionManagementSection(),
 
-        // ── API 配置 ──
+        // ── API 配置（v6.2 重写） ──
         _buildApiConfigSection(context, controller),
 
-        // ── 上下文管理（Phase 3 新增） ──
+        // ── 上下文管理 ──
         _buildContextManagementSection(context, controller),
 
         // ── 记忆管理 ──
@@ -64,7 +66,7 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
         _buildThemeSection(context),
 
         // ── 关于 ──
-        _buildAboutSection(context),
+        _buildAboutSection(),
 
         // ── 底部健康状态 ──
         Container(
@@ -174,118 +176,194 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
   }
 
   // ═══════════════════════════════════════════
-  //  API 配置
+  //  API 配置（v6.3：逐个添加 Agent）
   // ═══════════════════════════════════════════
 
   Widget _buildApiConfigSection(
     BuildContext context,
     SettingsController controller,
   ) {
-    final c = AppSemanticColors.of(context);
     final providerController = ref.watch(providerControllerProvider);
+    final agentsByProvider = _groupAgentsByProvider(controller.agents);
     return SectionPanel(
-      title: 'API 配置',
+      title: 'API 配置 · Agent',
       icon: Icons.api_outlined,
-      trailing: IconButton(
-        icon: const Icon(Icons.add_circle_outline, size: AppSpacing.iconSizeSm),
-        color: c.primary,
-        tooltip: '添加新配置',
-        onPressed: () => _showEditConfigDialog(context, controller, null),
-      ),
       children: [
-        if (controller.apiConfigs.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.base,
-              vertical: AppSpacing.md,
-            ),
-            child: Text(
-              '暂无 API 配置，请点击右上角 + 添加',
-              style: AppTypography.bodySmall.copyWith(color: c.textTertiary),
-            ),
-          )
-        else
-          ..._buildGroupedConfigTiles(context, controller, providerController),
-        const SizedBox(height: AppSpacing.sm),
-        SectionItem(
-          icon: Icons.add_circle_outline,
-          title: '添加新配置',
-          onTap: () => _showEditConfigDialog(context, controller, null),
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.base,
+            vertical: AppSpacing.sm,
+          ),
+          child: Text(
+            '每个 Provider 可添加多个模型作为独立 Agent。'
+            '点击「添加」选择模型，点击 Agent 配置参数。',
+            style: AppTypography.bodySmall.copyWith(
+                color: AppSemanticColors.of(context).textTertiary),
+          ),
         ),
+        for (final provider in providerController.providers)
+          _buildProviderGroup(
+            context,
+            controller,
+            provider,
+            agentsByProvider[provider.id] ?? const [],
+          ),
       ],
     );
   }
 
-  /// 按 Provider 分组构建配置列表
-  List<Widget> _buildGroupedConfigTiles(
+  Widget _buildProviderGroup(
     BuildContext context,
     SettingsController controller,
-    ProviderController providerController,
-  ) {
-    final configs = [...controller.apiConfigs];
-    // 默认配置排在前面
-    configs.sort((a, b) {
-      if (a.isDefault && !b.isDefault) return -1;
-      if (!a.isDefault && b.isDefault) return 1;
-      return a.configName.compareTo(b.configName);
-    });
-
-    return configs
-        .map((cfg) => _buildConfigTile(context, controller, providerController, cfg))
-        .toList();
-  }
-
-  Widget _buildConfigTile(
-    BuildContext context,
-    SettingsController controller,
-    ProviderController providerController,
-    ApiConfig config,
+    LlmProvider provider,
+    List<ApiConfig> agents,
   ) {
     final c = AppSemanticColors.of(context);
-    final provider = providerController.resolveProvider(config);
-    final isTesting = _testing.contains(config.id);
-    final result = _testResults[config.id];
-    final statusIcon = _buildStatusIcon(config, result);
-
-    return Container(
-      margin: const EdgeInsets.symmetric(
+    final presets = ref.read(providerControllerProvider).presetsFor(provider.id);
+    // 过滤掉已添加的模型
+    final addedModels = agents.map((a) => a.modelName).toSet();
+    final available =
+        presets.where((p) => !addedModels.contains(p.id)).toList();
+    return Padding(
+      padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.base,
         vertical: AppSpacing.xs,
       ),
-      decoration: BoxDecoration(
-        color: c.surfaceVariant,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-        border: Border.all(
-          color: config.isDefault ? c.primary : c.border,
-          width: config.isDefault ? 0.8 : 0.5,
+      child: Container(
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+          border: Border.all(color: c.border, width: 0.5),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Provider header
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.base,
+                vertical: AppSpacing.sm,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _iconForProvider(provider.id),
+                    size: AppSpacing.iconSizeSm,
+                    color: c.primary,
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Text(
+                    provider.displayName,
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: c.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  _buildProviderTypeBadge(provider),
+                  const Spacer(),
+                  if (agents.isNotEmpty)
+                    Text(
+                      '${agents.length} 个',
+                      style: AppTypography.bodySmall
+                          .copyWith(color: c.textTertiary),
+                    ),
+                ],
+              ),
+            ),
+            Divider(height: 0.5, color: c.divider),
+            // Agent 列表
+            if (agents.isNotEmpty)
+              ...agents.map(
+                (a) => _buildAgentTile(context, controller, a),
+              ),
+            // 添加 Agent 按钮
+            if (available.isNotEmpty)
+              InkWell(
+                onTap: () =>
+                    _showAddAgentDialog(context, controller, provider, available),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.base,
+                    vertical: AppSpacing.sm,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.add_circle_outline,
+                          size: 18, color: c.primary),
+                      const SizedBox(width: AppSpacing.sm),
+                      Text(
+                        '添加 Agent',
+                        style: AppTypography.bodyMedium.copyWith(
+                          color: c.primary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            // 无可用模型提示
+            if (agents.isEmpty && available.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(AppSpacing.base),
+                child: Text(
+                  '该 Provider 无可用模型',
+                  style: AppTypography.bodySmall
+                      .copyWith(color: c.textTertiary),
+                ),
+              ),
+          ],
         ),
       ),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
+    );
+  }
+
+  Widget _buildAgentTile(
+    BuildContext context,
+    SettingsController controller,
+    ApiConfig agent,
+  ) {
+    final c = AppSemanticColors.of(context);
+    final key = _agentKey(agent);
+    final isTesting = _testing.contains(key);
+    final result = _testResults[key];
+
+    return InkWell(
+      onTap: () => _showAgentEditDialog(context, controller, agent),
+      onLongPress: () => _showAgentDeleteMenu(context, controller, agent),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.base,
+          vertical: AppSpacing.sm,
+        ),
+        child: Column(
+          children: [
+            Row(
               children: [
                 Container(
-                  width: 40,
-                  height: 40,
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: c.surface,
-                    borderRadius:
-                        BorderRadius.circular(AppSpacing.radiusSm),
+                    color: agent.isDefault
+                        ? c.primary.withValues(alpha: 0.15)
+                        : c.surfaceVariant,
+                    borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                      color: c.primary.withValues(alpha: 0.3),
-                      width: 0.5,
+                      color: agent.isDefault ? c.primary : c.border,
+                      width: agent.isDefault ? 1 : 0.5,
                     ),
                   ),
                   child: Icon(
-                    _iconForProvider(provider.id),
-                    size: AppSpacing.iconSize,
-                    color: c.primary,
+                    agent.isDefault
+                        ? Icons.auto_awesome
+                        : Icons.bolt_outlined,
+                    size: 18,
+                    color: agent.isDefault ? c.primary : c.textSecondary,
                   ),
                 ),
-                const SizedBox(width: AppSpacing.md),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -295,391 +373,287 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
                         children: [
                           Flexible(
                             child: Text(
-                              config.configName,
-                              style: AppTypography.bodyLarge.copyWith(
+                              agent.modelName,
+                              style: AppTypography.bodyMedium.copyWith(
                                 color: c.textPrimary,
-                                fontSize: 15,
                                 fontWeight: FontWeight.w600,
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          const SizedBox(width: AppSpacing.sm),
-                          _buildProviderBadge(provider.displayName),
-                          const SizedBox(width: 4),
-                          _buildProviderTypeBadge(provider),
+                          if (agent.thinkingEnabled) ...[
+                            const SizedBox(width: 4),
+                            _MiniBadge(
+                              label: '思考',
+                              color: c.accent,
+                              icon: Icons.psychology_outlined,
+                            ),
+                          ],
+                          if (!agent.enabled) ...[
+                            const SizedBox(width: 4),
+                            _MiniBadge(
+                              label: '未启用',
+                              color: c.textTertiary,
+                              icon: Icons.visibility_off_outlined,
+                            ),
+                          ],
                         ],
                       ),
-                      const SizedBox(height: AppSpacing.xs),
+                      const SizedBox(height: 2),
                       Text(
-                        '${config.modelName} · ${config.redactedApiKey}',
-                        style: AppTypography.bodySmall,
+                        agent.apiKey.isEmpty
+                            ? '未配置 API Key'
+                            : 'Key: ${agent.redactedApiKey}',
+                        style: AppTypography.bodySmall
+                            .copyWith(color: c.textTertiary),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
                 ),
-                if (statusIcon != null) statusIcon,
-              ],
-            ),
-          ),
-          if (result != null)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md,
-                vertical: AppSpacing.sm,
-              ),
-              decoration: BoxDecoration(
-                color: result.success
-                    ? c.success.withValues(alpha: 0.08)
-                    : c.error.withValues(alpha: 0.08),
-                borderRadius: const BorderRadius.only(
-                  bottomLeft: Radius.circular(AppSpacing.radiusMd),
-                  bottomRight: Radius.circular(AppSpacing.radiusMd),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    result.success
-                        ? Icons.check_circle_outline
-                        : Icons.error_outline,
-                    size: AppSpacing.iconSizeSm,
-                    color: result.success ? c.success : c.error,
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
-                  Expanded(
-                    child: Text(
-                      result.message,
-                      style: AppTypography.bodySmall.copyWith(
-                        color: result.success ? c.success : c.error,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          Container(
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(
-                  color: c.divider.withValues(alpha: 0.6),
-                  width: 0.5,
-                ),
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.xs,
-                vertical: 2,
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _buildActionButton(
-                      icon: config.isDefault ? Icons.star : Icons.star_border,
-                      label: config.isDefault ? '已默认' : '默认',
-                      enabled: !config.isDefault,
-                      onTap: () => controller.setDefaultConfig(config.id!),
-                    ),
-                  ),
-                  _vDivider(),
-                  Expanded(
-                    child: _buildActionButton(
-                      icon: Icons.wifi_find,
-                      label: isTesting ? '测试中' : '测试',
-                      enabled: !isTesting,
-                      loading: isTesting,
-                      onTap: () => _runTestConnection(config),
-                    ),
-                  ),
-                  _vDivider(),
-                  Expanded(
-                    child: _buildActionButton(
-                      icon: Icons.edit_outlined,
-                      label: '编辑',
-                      onTap: () =>
-                          _showEditConfigDialog(context, controller, config),
-                    ),
-                  ),
-                  _vDivider(),
-                  Expanded(
-                    child: _buildActionButton(
-                      icon: Icons.delete_outline,
-                      label: '删除',
-                      color: c.error,
-                      onTap: () =>
-                          _confirmDeleteConfig(context, controller, config),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _vDivider() {
-    final c = AppSemanticColors.of(context);
-    return Container(
-      width: 0.5,
-      height: 20,
-      color: c.divider,
-    );
-  }
-
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-    Color? color,
-    bool enabled = true,
-    bool loading = false,
-  }) {
-    final c = AppSemanticColors.of(context);
-    final btnColor = color ?? c.primary;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 4,
-            vertical: AppSpacing.sm,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              loading
-                  ? SizedBox(
+                if (isTesting)
+                  Padding(
+                    padding: const EdgeInsets.only(left: AppSpacing.sm),
+                    child: SizedBox(
                       width: AppSpacing.iconSizeSm,
                       height: AppSpacing.iconSizeSm,
                       child: CircularProgressIndicator(
                         strokeWidth: 1.5,
-                        valueColor: AlwaysStoppedAnimation<Color>(btnColor),
+                        valueColor: AlwaysStoppedAnimation<Color>(c.primary),
                       ),
-                    )
-                  : Icon(icon,
-                      size: AppSpacing.iconSizeSm - 2, color: btnColor),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                style: AppTypography.bodySmall.copyWith(
-                  color: enabled ? btnColor : c.textDisabled,
-                  fontSize: 11,
+                    ),
+                  )
+                else if (result != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: AppSpacing.sm),
+                    child: Icon(
+                      result.success
+                          ? Icons.check_circle_outline
+                          : Icons.warning_amber_rounded,
+                      size: AppSpacing.iconSize,
+                      color: result.success ? c.success : c.error,
+                    ),
+                  ),
+                Icon(
+                  Icons.chevron_right,
+                  size: AppSpacing.iconSize,
+                  color: c.textTertiary,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Provider 显示徽章
-  Widget _buildProviderBadge(String name) {
-    final c = AppSemanticColors.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: 2,
-      ),
-      decoration: BoxDecoration(
-        color: c.primary.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-        border: Border.all(
-          color: c.primary.withValues(alpha: 0.3),
-          width: 0.5,
-        ),
-      ),
-      child: Text(
-        name,
-        style: AppTypography.labelMedium.copyWith(
-          color: c.primary,
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  /// 接入方式徽章：官方 / 自定义
-  Widget _buildProviderTypeBadge(LlmProvider provider) {
-    final c = AppSemanticColors.of(context);
-    final isOfficial = provider.configSchema.endpointFixed;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: isOfficial
-            ? c.primary.withValues(alpha: 0.12)
-            : c.surfaceVariant,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isOfficial ? Icons.verified_outlined : Icons.cloud_outlined,
-            size: 10,
-            color: isOfficial ? c.primary : c.textTertiary,
-          ),
-          const SizedBox(width: 3),
-          Text(
-            isOfficial ? '官方' : '自定义',
-            style: AppTypography.bodySmall.copyWith(
-              fontSize: 10,
-              color: isOfficial ? c.primary : c.textTertiary,
+              ],
             ),
-          ),
-        ],
+            if (result != null)
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.xs),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: result.success
+                        ? c.success.withValues(alpha: 0.08)
+                        : c.error.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                  ),
+                  child: Text(
+                    result.message,
+                    style: AppTypography.bodySmall.copyWith(
+                      color: result.success ? c.success : c.error,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget? _buildStatusIcon(ApiConfig config, _TestResult? result) {
-    final c = AppSemanticColors.of(context);
-    if (result != null && !result.success) {
-      return Padding(
-        padding: const EdgeInsets.only(left: AppSpacing.sm),
-        child: Icon(
-          Icons.warning_amber_rounded,
-          color: c.error,
-          size: AppSpacing.iconSize,
-        ),
-      );
-    }
-    if (config.isDefault) {
-      return Padding(
-        padding: const EdgeInsets.only(left: AppSpacing.sm),
-        child: Icon(
-          Icons.check_circle,
-          color: c.success,
-          size: AppSpacing.iconSize,
-        ),
-      );
-    }
-    if (result != null && result.success) {
-      return Padding(
-        padding: const EdgeInsets.only(left: AppSpacing.sm),
-        child: Icon(
-          Icons.check_circle_outline,
-          color: c.success,
-          size: AppSpacing.iconSize,
-        ),
-      );
-    }
-    return null;
-  }
-
-  /// 通过 Provider id 映射到 Material Icon
-  IconData _iconForProvider(String id) {
-    switch (id) {
-      case 'minimax':
-        return Icons.smart_toy;
-      case 'deepseek':
-        return Icons.psychology;
-      case 'mimo':
-        return Icons.phone_android;
-      case 'openai':
-        return Icons.bolt_outlined;
-      default:
-        return Icons.cloud_outlined;
-    }
-  }
-
-  /// 运行连接测试
-  Future<void> _runTestConnection(ApiConfig config) async {
-    if (config.id == null) return;
-    final id = config.id!;
-    final providerController = ref.read(providerControllerProvider);
-    setState(() {
-      _testing.add(id);
-      _testResults.remove(id);
-    });
-    bool success = false;
-    String message = '';
-    try {
-      success = await providerController.testConnection(config);
-      message = success ? 'API 连接正常' : 'API 连接失败';
-    } catch (e) {
-      success = false;
-      message = 'API 连接异常：$e';
-    }
-    if (!mounted) return;
-    setState(() {
-      _testing.remove(id);
-      _testResults[id] = _TestResult(success, message);
-    });
-  }
-
-  void _confirmDeleteConfig(
+  /// 打开 Agent 编辑面板
+  void _showAgentEditDialog(
     BuildContext context,
     SettingsController controller,
-    ApiConfig config,
+    ApiConfig agent,
   ) {
-    final c = AppSemanticColors.of(context);
     showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: c.surface,
-        title: Text(
-          '删除配置',
-          style: TextStyle(color: c.error, fontSize: 16),
-        ),
-        content: Text(
-          '确定要删除配置「${config.configName}」吗?此操作不可恢复。',
-          style: AppTypography.bodyMedium.copyWith(color: c.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: c.error),
-            onPressed: () {
-              controller.deleteConfig(config.id!);
-              if (config.id != null) {
-                _testing.remove(config.id);
-                _testResults.remove(config.id);
-              }
-              Navigator.pop(ctx);
-            },
-            child: const Text('删除'),
-          ),
-        ],
+      builder: (ctx) => _AgentEditDialog(
+        agent: agent,
+        onSave: (next) async {
+          await controller.saveAgent(next);
+          if (ctx.mounted) Navigator.pop(ctx);
+        },
+        onTest: (cfg) async {
+          final key = _agentKey(cfg);
+          setState(() {
+            _testing.add(key);
+            _testResults.remove(key);
+          });
+          bool ok = false;
+          String msg;
+          try {
+            ok = await ref
+                .read(providerControllerProvider)
+                .testConnection(cfg);
+            msg = ok ? 'API 连接正常' : 'API 连接失败';
+          } catch (e) {
+            ok = false;
+            msg = '异常：$e';
+          }
+          if (!mounted) return ok;
+          setState(() {
+            _testing.remove(key);
+            _testResults[key] = _TestResult(ok, msg);
+          });
+          return ok;
+        },
+        onSetDefault: () async {
+          await controller.setDefaultAgent(agent.providerId, agent.modelName);
+        },
+        onToggleEnabled: () async {
+          await controller.setAgentEnabled(
+            agent.providerId,
+            agent.modelName,
+            enabled: !agent.enabled,
+          );
+        },
       ),
     );
   }
 
-  /// 显示"添加 / 编辑配置"对话框
-  void _showEditConfigDialog(
+  /// 长按 Agent 弹出删除菜单
+  void _showAgentDeleteMenu(
     BuildContext context,
     SettingsController controller,
-    ApiConfig? existing,
+    ApiConfig agent,
   ) {
-    final providerController = ref.read(providerControllerProvider);
-    showDialog<void>(
+    final c = AppSemanticColors.of(context);
+    showModalBottomSheet<void>(
       context: context,
-      builder: (ctx) {
-        return _ConfigEditDialog(
-          existing: existing,
-          providerController: providerController,
-          onSubmit: (cfg) async {
-            await controller.saveConfig(cfg);
-            if (ctx.mounted) Navigator.pop(ctx);
-          },
-          onTest: providerController.testConnection,
-        );
-      },
+      backgroundColor: c.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: c.textDisabled,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Text(
+                agent.modelName,
+                style: AppTypography.titleMedium
+                    .copyWith(color: c.textPrimary),
+              ),
+            ),
+            Divider(height: 0.5, color: c.divider),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: c.error),
+              title: Text(
+                '删除 Agent',
+                style: AppTypography.bodyMedium.copyWith(color: c.error),
+              ),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await controller.deleteAgent(
+                    agent.providerId, agent.modelName);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 弹出「添加 Agent」对话框：列出该 Provider 尚未添加的模型供选择
+  void _showAddAgentDialog(
+    BuildContext context,
+    SettingsController controller,
+    LlmProvider provider,
+    List<ProviderModelPreset> available,
+  ) {
+    final c = AppSemanticColors.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: c.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: c.textDisabled,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Text(
+                '添加 ${provider.displayName} Agent',
+                style: AppTypography.titleMedium
+                    .copyWith(color: c.textPrimary),
+              ),
+            ),
+            Divider(height: 0.5, color: c.divider),
+            for (final preset in available)
+              ListTile(
+                leading: Container(
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: c.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child:
+                      Icon(Icons.add_circle_outline, size: 18, color: c.primary),
+                ),
+                title: Text(
+                  preset.displayName,
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: c.textPrimary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  preset.description ?? preset.id,
+                  style: AppTypography.bodySmall
+                      .copyWith(color: c.textTertiary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await controller.addAgent(provider.id, preset.id);
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
     );
   }
 
@@ -724,7 +698,7 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
   }
 
   // ═══════════════════════════════════════════
-  //  上下文管理（Phase 3 新增）
+  //  上下文管理
   // ═══════════════════════════════════════════
 
   Widget _buildContextManagementSection(
@@ -759,9 +733,7 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
               const SizedBox(height: AppSpacing.xs),
               Text(
                 _strategyHint(ctx.strategy),
-                style: AppTypography.bodySmall.copyWith(
-                  color: c.textTertiary,
-                ),
+                style: AppTypography.bodySmall.copyWith(color: c.textTertiary),
               ),
             ],
           ),
@@ -804,7 +776,8 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
                 ),
               ),
               const SizedBox(height: AppSpacing.xs),
-              _buildSummaryCharsSelector(context, controller, ctx.summaryMaxChars),
+              _buildSummaryCharsSelector(
+                  context, controller, ctx.summaryMaxChars),
             ],
           ),
         ),
@@ -825,9 +798,8 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
               Expanded(
                 child: Text(
                   '自动压缩会消耗额外 API Token，超出条数的旧消息将被 LLM 滚动合并为摘要后写入 wiki/sessions/',
-                  style: AppTypography.bodySmall.copyWith(
-                    color: c.textTertiary,
-                  ),
+                  style: AppTypography.bodySmall
+                      .copyWith(color: c.textTertiary),
                 ),
               ),
             ],
@@ -931,11 +903,11 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
   String _strategyHint(ContextStrategy s) {
     switch (s) {
       case ContextStrategy.truncate:
-        return '超出上限时直接丢弃旧消息，不消耗 API Token（推荐）';
+        return '超过最大条数时直接丢弃最旧消息，无额外 API 调用';
       case ContextStrategy.compress:
-        return '超出上限时调用 LLM 生成滚动摘要并写入 wiki/sessions/';
+        return '超过最大条数时让 LLM 滚动合并为摘要，写入 wiki/sessions/';
       case ContextStrategy.nolimit:
-        return '不做任何截断，可能消耗大量 Token，请谨慎使用';
+        return '保留全部消息；适合调试与小上下文场景';
     }
   }
 
@@ -947,122 +919,125 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
     BuildContext context,
     SettingsController controller,
   ) {
+    final c = AppSemanticColors.of(context);
     return SectionPanel(
       title: 'Token 偏好',
-      icon: Icons.token_outlined,
+      icon: Icons.timeline_outlined,
       children: [
-        SectionItem(
-          icon: Icons.chat_outlined,
-          title: '单次对话 Token 阈值',
-          subtitle: '超过阈值时发送前弹出确认框',
-          trailing: _buildThresholdChip('${controller.chatTokenThreshold}'),
-          onTap: () => _showThresholdEditDialog(
-            context,
-            title: '对话 Token 阈值',
-            currentValue: controller.chatTokenThreshold,
-            onSaved: controller.setChatTokenThreshold,
-          ),
+        _buildSliderRow(
+          context,
+          label: '对话告警阈值',
+          subtitle: '单次对话 token 累计达此值时弹提示',
+          value: controller.chatTokenThreshold.toDouble(),
+          min: 1000,
+          max: 32000,
+          step: 1000,
+          onChanged: (v) =>
+              controller.setChatTokenThreshold(v.toInt()),
+          display: '${controller.chatTokenThreshold}',
         ),
-        SectionItem(
-          icon: Icons.auto_awesome_outlined,
-          title: 'Ingest Token 阈值',
-          subtitle: '超过阈值时强制二次确认',
-          trailing: _buildThresholdChip('${controller.ingestTokenThreshold}'),
-          onTap: () => _showThresholdEditDialog(
-            context,
-            title: 'Ingest Token 阈值',
-            currentValue: controller.ingestTokenThreshold,
-            onSaved: controller.setIngestTokenThreshold,
+        _buildSliderRow(
+          context,
+          label: 'Ingest 告警阈值',
+          subtitle: '单次素材摄入消耗 token 达此值时暂停',
+          value: controller.ingestTokenThreshold.toDouble(),
+          min: 1000,
+          max: 32000,
+          step: 1000,
+          onChanged: (v) =>
+              controller.setIngestTokenThreshold(v.toInt()),
+          display: '${controller.ingestTokenThreshold}',
+        ),
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: AppSpacing.base),
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          decoration: BoxDecoration(
+            color: c.surfaceVariant,
+            borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+            border: Border.all(color: c.border, width: 0.5),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.tips_and_updates_outlined,
+                  size: AppSpacing.iconSizeSm, color: c.warning),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  'Token 数据由 LLM 实际返回的 usage 字段累加得到；阈值只是提醒，不会阻断对话',
+                  style:
+                      AppTypography.bodySmall.copyWith(color: c.textTertiary),
+                ),
+              ),
+            ],
           ),
         ),
       ],
     );
   }
 
-  Widget _buildThresholdChip(String value) {
-    final c = AppSemanticColors.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: AppSpacing.xs,
-      ),
-      decoration: BoxDecoration(
-        color: c.surfaceVariant,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-        border: Border.all(color: c.border, width: 0.5),
-      ),
-      child: Text(
-        value,
-        style: AppTypography.labelMedium.copyWith(
-          color: c.textSecondary,
-          fontFamily: 'monospace',
-        ),
-      ),
-    );
-  }
-
-  void _showThresholdEditDialog(
+  Widget _buildSliderRow(
     BuildContext context, {
-    required String title,
-    required int currentValue,
-    required ValueChanged<int> onSaved,
+    required String label,
+    required String subtitle,
+    required double value,
+    required double min,
+    required double max,
+    required double step,
+    required ValueChanged<double> onChanged,
+    required String display,
   }) {
     final c = AppSemanticColors.of(context);
-    final ctrl = TextEditingController(text: currentValue.toString());
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: c.surface,
-        title: Text(
-          title,
-          style: TextStyle(color: c.textPrimary, fontSize: 16),
-        ),
-        content: TextField(
-          controller: ctrl,
-          keyboardType: TextInputType.number,
-          style: AppTypography.bodyMedium.copyWith(color: c.textPrimary),
-          decoration: InputDecoration(
-            hintText: '请输入 Token 数量',
-            hintStyle: AppTypography.bodySmall.copyWith(color: c.textDisabled),
-            filled: true,
-            fillColor: c.surfaceVariant,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-              borderSide: BorderSide(color: c.border),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-              borderSide: BorderSide(color: c.border),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-              borderSide: BorderSide(color: c.borderFocus),
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.md,
-              vertical: AppSpacing.sm,
-            ),
-            isDense: true,
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.base,
+        vertical: AppSpacing.sm,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: AppTypography.bodyMedium
+                          .copyWith(color: c.textPrimary),
+                    ),
+                    Text(
+                      subtitle,
+                      style: AppTypography.bodySmall
+                          .copyWith(color: c.textTertiary),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm, vertical: 2),
+                decoration: BoxDecoration(
+                  color: c.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  display,
+                  style: AppTypography.bodySmall.copyWith(
+                    color: c.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final value = int.tryParse(ctrl.text);
-              if (value != null && value > 0) {
-                onSaved(value);
-                Navigator.pop(ctx);
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('请输入有效的正整数')),
-                );
-              }
-            },
-            child: const Text('保存'),
+          Slider(
+            value: value,
+            min: min,
+            max: max,
+            divisions: ((max - min) / step).toInt(),
+            label: display,
+            onChanged: onChanged,
           ),
         ],
       ),
@@ -1079,21 +1054,21 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
       icon: Icons.folder_outlined,
       children: [
         SectionItem(
-          icon: Icons.backup_outlined,
-          title: 'Wiki 文件自动备份',
-          subtitle: '每次修改自动在 backup/ 下生成历史版本',
-          trailing: Switch(
-            value: controller.autoBackup,
-            onChanged: (_) => controller.toggleAutoBackup(),
-          ),
-        ),
-        SectionItem(
-          icon: Icons.cleaning_services_outlined,
-          title: 'Raw 文件自动清理',
-          subtitle: '自动清理存入超过 30 天的原始素材',
+          icon: Icons.auto_delete_outlined,
+          title: '自动清理 raw/ 素材',
+          subtitle: '摄入完成 7 天后删除 raw/ 原始文件',
           trailing: Switch(
             value: controller.autoCleanRaw,
             onChanged: (_) => controller.toggleAutoCleanRaw(),
+          ),
+        ),
+        SectionItem(
+          icon: Icons.backup_outlined,
+          title: '写入前自动备份',
+          subtitle: '每次写入 wiki 文件前在 .backup/ 留一份历史',
+          trailing: Switch(
+            value: controller.autoBackup,
+            onChanged: (_) => controller.toggleAutoBackup(),
           ),
         ),
       ],
@@ -1101,73 +1076,33 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
   }
 
   // ═══════════════════════════════════════════
-  //  主题外观（与抽屉的切换器联动）
+  //  主题外观
   // ═══════════════════════════════════════════
 
   Widget _buildThemeSection(BuildContext context) {
     final c = AppSemanticColors.of(context);
-    final themeMode = ref.watch(themeModeProvider);
-    final controller = ref.read(themeModeProvider.notifier);
-
-    Widget segBtn(ThemeMode mode, IconData icon, String label) {
-      final selected = mode == themeMode;
-      return Expanded(
-        child: Material(
-          color: selected
-              ? c.primary.withValues(alpha: 0.12)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-            onTap: () => controller.set(mode),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon,
-                      size: 18,
-                      color: selected ? c.primary : c.textTertiary),
-                  const SizedBox(height: 4),
-                  Text(
-                    label,
-                    style: AppTypography.bodySmall.copyWith(
-                      fontSize: 11,
-                      color: selected ? c.primary : c.textTertiary,
-                      fontWeight:
-                          selected ? FontWeight.w600 : FontWeight.w400,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
     return SectionPanel(
       title: '主题外观',
       icon: Icons.palette_outlined,
       children: [
-        Padding(
+        Container(
           padding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.base,
-            vertical: AppSpacing.sm,
+            vertical: AppSpacing.md,
           ),
-          child: Container(
-            decoration: BoxDecoration(
-              color: c.surfaceVariant,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: c.border, width: 0.5),
-            ),
-            child: Row(
-              children: [
-                segBtn(ThemeMode.light, Icons.light_mode_outlined, '白天'),
-                segBtn(ThemeMode.dark, Icons.dark_mode_outlined, '夜晚'),
-                segBtn(ThemeMode.system, Icons.brightness_auto_outlined, '自动'),
-              ],
-            ),
+          child: Row(
+            children: [
+              Icon(Icons.color_lens_outlined,
+                  size: AppSpacing.iconSizeSm, color: c.primary),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  '主题由系统外观自动切换（v6.2）',
+                  style: AppTypography.bodyMedium
+                      .copyWith(color: c.textSecondary),
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -1178,180 +1113,169 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
   //  关于
   // ═══════════════════════════════════════════
 
-  Widget _buildAboutSection(BuildContext context) {
+  Widget _buildAboutSection() {
     final c = AppSemanticColors.of(context);
     return SectionPanel(
       title: '关于',
       icon: Icons.info_outline,
       children: [
-        SectionItem(
-          icon: Icons.code_outlined,
-          title: '查看 schema.md',
-          subtitle: 'LLM Wiki 编写规则',
-          trailing: Icon(Icons.chevron_right,
-              color: c.textTertiary, size: AppSpacing.iconSizeSm),
-        ),
-        SectionItem(
-          icon: Icons.storage_outlined,
-          title: '存储统计',
-          subtitle: 'Wiki 12 个页面 · Raw 3 个文件 · 256 KB',
-          trailing: Icon(Icons.chevron_right,
-              color: c.textTertiary, size: AppSpacing.iconSizeSm),
-        ),
-        SectionItem(
-          icon: Icons.token_outlined,
-          title: 'Token 消耗统计',
-          subtitle: '今日: 12,480 tokens · 本月: 156,720 tokens',
-          trailing: Icon(Icons.chevron_right,
-              color: c.textTertiary, size: AppSpacing.iconSizeSm),
-        ),
-        const SizedBox(height: AppSpacing.md),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.base),
-          child: OutlinedButton(
-            onPressed: () => _handleClearWiki(context),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: c.error,
-              side: BorderSide(color: c.error, width: 0.5),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-              ),
-              padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
-            ),
-            child: const Text('清空 Wiki 知识库'),
+        ListTile(
+          leading: Icon(Icons.android, color: c.primary),
+          title: Text('LLM-Wiki · v6.2',
+              style: AppTypography.bodyMedium
+                  .copyWith(color: c.textPrimary)),
+          subtitle: Text(
+            'Agent 化的本地知识库引擎',
+            style: AppTypography.bodySmall.copyWith(color: c.textTertiary),
           ),
         ),
-        const SizedBox(height: AppSpacing.sm),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.base),
-          child: OutlinedButton(
-            onPressed: () => _handleClearAll(context),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: c.error,
-              side: BorderSide(color: c.error, width: 0.5),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-              ),
-              padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
-            ),
-            child: const Text('清空所有数据'),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.base),
-        Center(
-          child: Text(
-            'Owl v0.1.0 · LLM-Wiki v1.0',
-            style: AppTypography.bodySmall.copyWith(
-              color: c.textTertiary,
-              fontSize: 11,
-            ),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
       ],
     );
   }
 
-  void _handleClearWiki(BuildContext context) {
+  // ═══════════════════════════════════════════
+  //  辅助组件
+  // ═══════════════════════════════════════════
+
+  Map<String, List<ApiConfig>> _groupAgentsByProvider(List<ApiConfig> all) {
+    final map = <String, List<ApiConfig>>{};
+    for (final a in all) {
+      map.putIfAbsent(a.providerId, () => []).add(a);
+    }
+    for (final list in map.values) {
+      list.sort((a, b) => a.modelName.compareTo(b.modelName));
+    }
+    return map;
+  }
+
+  IconData _iconForProvider(String id) {
+    switch (id) {
+      case 'minimax':
+        return Icons.smart_toy;
+      case 'deepseek':
+        return Icons.psychology;
+      case 'mimo':
+        return Icons.phone_android;
+      case 'openai':
+        return Icons.bolt_outlined;
+      default:
+        return Icons.cloud_outlined;
+    }
+  }
+
+  Widget _buildProviderTypeBadge(LlmProvider provider) {
     final c = AppSemanticColors.of(context);
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: c.surface,
-        title: Text('清空 Wiki 知识库',
-            style: TextStyle(color: c.error, fontSize: 16)),
-        content: Text(
-          '将删除 wiki/ 下所有页面，保留 raw/、schema.md、index.md。此操作不可恢复。',
-          style: AppTypography.bodyMedium.copyWith(color: c.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
+    final isOfficial = provider.configSchema.endpointFixed;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: isOfficial
+            ? c.primary.withValues(alpha: 0.12)
+            : c.surfaceVariant,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isOfficial ? Icons.verified_outlined : Icons.cloud_outlined,
+            size: 10,
+            color: isOfficial ? c.primary : c.textTertiary,
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: c.error),
-            onPressed: () {
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Wiki 知识库已清空')),
-              );
-            },
-            child: const Text('确认清空'),
+          const SizedBox(width: 3),
+          Text(
+            isOfficial ? '官方' : '自定义',
+            style: AppTypography.bodySmall.copyWith(
+              fontSize: 10,
+              color: isOfficial ? c.primary : c.textTertiary,
+            ),
           ),
         ],
       ),
     );
   }
 
-  void _handleClearAll(BuildContext context) {
-    final c = AppSemanticColors.of(context);
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: c.surface,
-        title: Text('清空所有数据',
-            style: TextStyle(color: c.error, fontSize: 16)),
-        content: Text(
-          '将删除整个 llm-wiki 目录，恢复初始化状态。所有知识、对话记录将被永久删除。',
-          style: AppTypography.bodyMedium.copyWith(color: c.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: c.error),
-            onPressed: () {
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('所有数据已清空')),
-              );
-            },
-            child: const Text('确认删除'),
-          ),
-        ],
-      ),
-    );
   }
-}
 
-/// 单条配置的测试结果缓存
+/// 单条 Agent 的测试结果
 class _TestResult {
   const _TestResult(this.success, this.message);
   final bool success;
   final String message;
 }
 
-// ═══════════════════════════════════════════
-//  添加 / 编辑 API 配置 对话框
-// ═══════════════════════════════════════════
-
-/// "添加 / 编辑 API 配置" 对话框
-class _ConfigEditDialog extends StatefulWidget {
-  const _ConfigEditDialog({
-    required this.existing,
-    required this.providerController,
-    required this.onSubmit,
-    required this.onTest,
+/// 紧凑徽章（用于 Agent 卡片右侧 chip）
+class _MiniBadge extends StatelessWidget {
+  const _MiniBadge({
+    required this.label,
+    required this.color,
+    this.icon,
   });
-
-  final ApiConfig? existing;
-  final ProviderController providerController;
-  final Future<void> Function(ApiConfig config) onSubmit;
-  final Future<bool> Function(ApiConfig config) onTest;
+  final String label;
+  final Color color;
+  final IconData? icon;
 
   @override
-  State<_ConfigEditDialog> createState() => _ConfigEditDialogState();
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 10, color: color),
+            const SizedBox(width: 2),
+          ],
+          Text(
+            label,
+            style: AppTypography.bodySmall.copyWith(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-class _ConfigEditDialogState extends State<_ConfigEditDialog> {
-  late final TextEditingController _nameCtrl;
-  late final TextEditingController _modelCtrl;
-  late final TextEditingController _endpointCtrl;
-  late final TextEditingController _keyCtrl;
-  late String _selectedProviderId;
+// ═══════════════════════════════════════════
+//  Agent 编辑对话框
+// ═══════════════════════════════════════════
+
+class _AgentEditDialog extends StatefulWidget {
+  const _AgentEditDialog({
+    required this.agent,
+    required this.onSave,
+    required this.onTest,
+    required this.onSetDefault,
+    required this.onToggleEnabled,
+  });
+
+  final ApiConfig agent;
+  final Future<void> Function(ApiConfig next) onSave;
+  final Future<bool> Function(ApiConfig cfg) onTest;
+  final Future<void> Function() onSetDefault;
+  final Future<void> Function() onToggleEnabled;
+
+  @override
+  State<_AgentEditDialog> createState() => _AgentEditDialogState();
+}
+
+class _AgentEditDialogState extends State<_AgentEditDialog> {
+  late TextEditingController _endpointCtrl;
+  late TextEditingController _keyCtrl;
+  late TextEditingController _maxTokensCtrl;
+  late double _temperature;
+  late double _topP;
+  late bool _thinkingEnabled;
+  late bool _enabled;
+  late bool _isDefault;
   bool _isTesting = false;
   String? _testResultMsg;
   bool? _testResultSuccess;
@@ -1359,195 +1283,177 @@ class _ConfigEditDialogState extends State<_ConfigEditDialog> {
   @override
   void initState() {
     super.initState();
-    final e = widget.existing;
-    _nameCtrl = TextEditingController(text: e?.configName ?? '');
-    _modelCtrl = TextEditingController(text: e?.modelName ?? '');
-    _endpointCtrl = TextEditingController(text: e?.apiEndpoint ?? '');
-    _keyCtrl = TextEditingController(text: e?.apiKey ?? '');
-    _selectedProviderId = (e != null && e.providerId.isNotEmpty)
-        ? e.providerId
-        : (widget.providerController.providers.isNotEmpty
-            ? widget.providerController.providers.first.id
-            : 'auto');
-    _applySchemaDefaults(_selectedProviderId);
-  }
-
-  /// 根据当前 Provider 的 schema 应用默认值（仅对空白字段生效）
-  ///
-  /// 配置名称自动同步为模型名称。
-  void _applySchemaDefaults(String providerId) {
-    final provider = widget.providerController.providerById(providerId);
-    if (provider == null) return;
-    final schema = provider.configSchema;
-    if (widget.existing == null) {
-      if (_modelCtrl.text.isEmpty) _modelCtrl.text = schema.modelDefault;
-      if (_endpointCtrl.text.isEmpty) _endpointCtrl.text = schema.endpointDefault;
-      // 配置名称 = 模型名称
-      if (_nameCtrl.text.isEmpty) _nameCtrl.text = _modelCtrl.text;
-    }
+    final a = widget.agent;
+    _endpointCtrl = TextEditingController(text: a.apiEndpoint);
+    _keyCtrl = TextEditingController(text: a.apiKey);
+    _maxTokensCtrl = TextEditingController(text: '${a.maxCompletionTokens}');
+    _temperature = a.temperature;
+    _topP = a.topP;
+    _thinkingEnabled = a.thinkingEnabled;
+    _enabled = a.enabled;
+    _isDefault = a.isDefault;
   }
 
   @override
   void dispose() {
-    _nameCtrl.dispose();
-    _modelCtrl.dispose();
     _endpointCtrl.dispose();
     _keyCtrl.dispose();
+    _maxTokensCtrl.dispose();
     super.dispose();
   }
 
+  ApiConfig _buildNext() {
+    return widget.agent.copyWith(
+      apiEndpoint: _endpointCtrl.text.trim().isNotEmpty
+          ? _endpointCtrl.text.trim()
+          : widget.agent.apiEndpoint,
+      apiKey: _keyCtrl.text.trim(),
+      temperature: _temperature,
+      topP: _topP,
+      maxCompletionTokens: int.tryParse(_maxTokensCtrl.text.trim()) ??
+          widget.agent.maxCompletionTokens,
+      thinkingEnabled: _thinkingEnabled,
+      enabled: _enabled,
+      isDefault: _isDefault,
+    );
+  }
+
   Future<void> _runTest() async {
-    if (_modelCtrl.text.trim().isEmpty || _keyCtrl.text.trim().isEmpty) {
+    if (_keyCtrl.text.trim().isEmpty) {
       setState(() {
         _testResultSuccess = false;
-        _testResultMsg = '请先填写模型名称和 API Key';
+        _testResultMsg = '请先填写 API Key';
       });
       return;
-    }
-    var cfg = _buildConfig();
-    final provider = widget.providerController.providerById(_selectedProviderId);
-    if (provider != null) {
-      cfg = provider.resolveConfig(cfg);
     }
     setState(() {
       _isTesting = true;
       _testResultMsg = null;
     });
-    bool ok = false;
-    try {
-      ok = await widget.onTest(cfg);
-    } catch (err) {
-      ok = false;
-      _testResultMsg = '异常：$err';
-    }
+    final ok = await widget.onTest(_buildNext());
     if (!mounted) return;
     setState(() {
       _isTesting = false;
       _testResultSuccess = ok;
-      _testResultMsg ??= ok ? 'API 连接正常 ✓' : 'API 连接失败';
+      _testResultMsg = ok ? 'API 连接正常 ✓' : 'API 连接失败';
     });
-  }
-
-  ApiConfig _buildConfig() {
-    final e = widget.existing;
-    final provider = widget.providerController.providerById(_selectedProviderId);
-    final schema = provider?.configSchema ?? const ProviderConfigSchema();
-    final modelName = _modelCtrl.text.trim().isNotEmpty
-        ? _modelCtrl.text.trim()
-        : schema.modelDefault;
-    final endpoint = _endpointCtrl.text.trim().isNotEmpty
-        ? _endpointCtrl.text.trim()
-        : schema.endpointDefault;
-    return ApiConfig(
-      id: e?.id,
-      configName: modelName,
-      modelName: modelName,
-      apiEndpoint: endpoint,
-      apiKey: _keyCtrl.text.trim(),
-      isDefault: e?.isDefault ?? false,
-      providerId: _selectedProviderId,
-    );
-  }
-
-  void _submit() {
-    if (_modelCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请选择或输入模型名称')),
-      );
-      return;
-    }
-    if (_keyCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入 API Key')),
-      );
-      return;
-    }
-    var cfg = _buildConfig();
-    final provider = widget.providerController.providerById(_selectedProviderId);
-    if (provider != null) {
-      cfg = provider.resolveConfig(cfg);
-    }
-    widget.onSubmit(cfg);
   }
 
   @override
   Widget build(BuildContext context) {
     final c = AppSemanticColors.of(context);
-    final providers = widget.providerController.providers;
-    final presets = widget.providerController.presetsFor(_selectedProviderId);
-    final isEdit = widget.existing != null;
-    final schema = widget.providerController
-            .providerById(_selectedProviderId)?.configSchema ??
-        const ProviderConfigSchema();
     return AlertDialog(
       backgroundColor: c.surface,
       title: Text(
-        isEdit ? '编辑 API 配置' : '添加 API 配置',
+        widget.agent.modelName,
         style: TextStyle(color: c.textPrimary, fontSize: 16),
       ),
       content: SizedBox(
-        width: 400,
+        width: 420,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildLabel('供应商'),
-              const SizedBox(height: AppSpacing.xs),
-              _buildProviderDropdown(providers),
+              Text(
+                'Provider · ${widget.agent.providerId}',
+                style: AppTypography.bodySmall
+                    .copyWith(color: c.textTertiary),
+              ),
               const SizedBox(height: AppSpacing.md),
-              if (schema.showModel) ...[
-                _buildLabel('模型'),
-                const SizedBox(height: AppSpacing.xs),
-                _buildModelDropdown(presets),
-                const SizedBox(height: AppSpacing.md),
-              ],
-              if (schema.showEndpoint && schema.endpointEditable) ...[
-                _buildLabel('API 端点'),
-                const SizedBox(height: AppSpacing.xs),
-                _buildTextField(
-                  controller: _endpointCtrl,
-                  hint: 'https://api.example.com/v1',
-                ),
-                const SizedBox(height: AppSpacing.md),
-              ] else if (schema.showEndpoint && !schema.endpointEditable) ...[
-                _buildLabel('API 端点'),
-                const SizedBox(height: AppSpacing.xs),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-                  decoration: BoxDecoration(
-                    color: c.surfaceVariant,
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                    border: Border.all(color: c.border, width: 0.5),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.lock_outline,
-                          size: 14, color: c.textTertiary),
-                      const SizedBox(width: AppSpacing.xs),
-                      Expanded(
-                        child: Text(
-                          _endpointCtrl.text.isEmpty
-                              ? schema.endpointDefault
-                              : _endpointCtrl.text,
-                          style: AppTypography.bodyMedium
-                              .copyWith(color: c.textSecondary),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.md),
-              ],
+              _buildLabel('API 端点'),
+              const SizedBox(height: AppSpacing.xs),
+              _buildTextField(
+                _endpointCtrl,
+                hint: 'https://api.example.com/v1',
+              ),
+              const SizedBox(height: AppSpacing.md),
               _buildLabel('API Key'),
               const SizedBox(height: AppSpacing.xs),
               _buildTextField(
-                controller: _keyCtrl,
+                _keyCtrl,
                 hint: '请输入 API Key',
                 obscure: true,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildSliderField(
+                      label: '温度',
+                      value: _temperature,
+                      min: 0,
+                      max: 2,
+                      divisions: 20,
+                      display: _temperature.toStringAsFixed(2),
+                      onChanged: (v) => setState(() => _temperature = v),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: _buildSliderField(
+                      label: 'Top-P',
+                      value: _topP,
+                      min: 0,
+                      max: 1,
+                      divisions: 20,
+                      display: _topP.toStringAsFixed(2),
+                      onChanged: (v) => setState(() => _topP = v),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _buildLabel('最大完成 token 数'),
+              const SizedBox(height: AppSpacing.xs),
+              _buildTextField(
+                _maxTokensCtrl,
+                hint: '4096',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: Text('启用深度思考',
+                    style: AppTypography.bodyMedium
+                        .copyWith(color: c.textPrimary)),
+                subtitle: Text(
+                  '开启后 DeepSeek 会使用 reasoning_effort；'
+                  'DeepSeek 启用时不可同时设温度与 Top-P',
+                  style: AppTypography.bodySmall
+                      .copyWith(color: c.textTertiary),
+                ),
+                value: _thinkingEnabled,
+                onChanged: (v) => setState(() => _thinkingEnabled = v),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: Text('启用此 Agent',
+                    style: AppTypography.bodyMedium
+                        .copyWith(color: c.textPrimary)),
+                subtitle: Text(
+                  '关闭后该 Agent 不参与默认/模型切换候选',
+                  style: AppTypography.bodySmall
+                      .copyWith(color: c.textTertiary),
+                ),
+                value: _enabled,
+                onChanged: (v) => setState(() => _enabled = v),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: Text('设为默认 Agent',
+                    style: AppTypography.bodyMedium
+                        .copyWith(color: c.textPrimary)),
+                subtitle: Text(
+                  '对话时未指定模型则使用此 Agent',
+                  style: AppTypography.bodySmall
+                      .copyWith(color: c.textTertiary),
+                ),
+                value: _isDefault,
+                onChanged: (v) => setState(() => _isDefault = v),
               ),
               if (_testResultMsg != null) ...[
                 const SizedBox(height: AppSpacing.md),
@@ -1615,7 +1521,7 @@ class _ConfigEditDialogState extends State<_ConfigEditDialog> {
           child: const Text('取消'),
         ),
         ElevatedButton(
-          onPressed: _submit,
+          onPressed: () => widget.onSave(_buildNext()),
           child: const Text('保存'),
         ),
       ],
@@ -1633,147 +1539,19 @@ class _ConfigEditDialogState extends State<_ConfigEditDialog> {
     );
   }
 
-  Widget _buildProviderDropdown(List<LlmProvider> providers) {
-    final c = AppSemanticColors.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-      decoration: BoxDecoration(
-        color: c.surfaceVariant,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-        border: Border.all(color: c.border, width: 0.5),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: providers.any((p) => p.id == _selectedProviderId)
-              ? _selectedProviderId
-              : (providers.isNotEmpty ? providers.first.id : null),
-          isExpanded: true,
-          dropdownColor: c.surfaceVariant,
-          iconEnabledColor: c.primary,
-          style: AppTypography.bodyMedium.copyWith(color: c.textPrimary),
-          items: providers
-              .map((p) => DropdownMenuItem<String>(
-                    value: p.id,
-                    child: Row(
-                      children: [
-                        Icon(
-                          _iconForProviderStatic(p.id),
-                          size: AppSpacing.iconSizeSm,
-                          color: c.primary,
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        Text(p.displayName),
-                      ],
-                    ),
-                  ))
-              .toList(),
-          onChanged: (v) {
-            if (v == null) return;
-            setState(() {
-              _selectedProviderId = v;
-            });
-            _applySchemaDefaults(v);
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildModelDropdown(List<ProviderModelPreset> presets) {
-    final c = AppSemanticColors.of(context);
-    final hasPreset = presets.any((p) => p.id == _modelCtrl.text);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-      decoration: BoxDecoration(
-        color: c.surfaceVariant,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-        border: Border.all(color: c.border, width: 0.5),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: hasPreset ? _modelCtrl.text : null,
-                isExpanded: true,
-                dropdownColor: c.surfaceVariant,
-                iconEnabledColor: c.primary,
-                hint: Text(
-                  '选择模型预设',
-                  style: AppTypography.bodyMedium
-                      .copyWith(color: c.textDisabled),
-                ),
-                style: AppTypography.bodyMedium.copyWith(color: c.textPrimary),
-                items: presets
-                    .map((p) => DropdownMenuItem<String>(
-                          value: p.id,
-                          child: Text(p.displayName),
-                        ))
-                    .toList(),
-                onChanged: (v) {
-                  if (v == null) return;
-                  setState(() {
-                    _modelCtrl.text = v;
-                    // 配置名称 = 模型名称
-                    if (_nameCtrl.text.isEmpty || _nameCtrl.text == _modelCtrl.text) {
-                      _nameCtrl.text = v;
-                    }
-                  });
-                },
-              ),
-            ),
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          SizedBox(
-            width: 100,
-            child: TextField(
-              controller: _modelCtrl,
-              style: AppTypography.bodyMedium
-                  .copyWith(color: c.textPrimary, fontSize: 12),
-              decoration: InputDecoration(
-                hintText: '或自定义',
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.sm,
-                  vertical: AppSpacing.sm,
-                ),
-                filled: true,
-                fillColor: c.surface,
-                border: OutlineInputBorder(
-                  borderRadius:
-                      BorderRadius.circular(AppSpacing.radiusSm),
-                  borderSide:
-                      BorderSide(color: c.border, width: 0.5),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius:
-                      BorderRadius.circular(AppSpacing.radiusSm),
-                  borderSide:
-                      BorderSide(color: c.border, width: 0.5),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius:
-                      BorderRadius.circular(AppSpacing.radiusSm),
-                  borderSide: BorderSide(color: c.borderFocus),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTextField({
-    required TextEditingController controller,
+  Widget _buildTextField(
+    TextEditingController controller, {
     required String hint,
     bool obscure = false,
+    TextInputType? keyboardType,
   }) {
     final c = AppSemanticColors.of(context);
     return TextField(
       controller: controller,
       obscureText: obscure,
-      style: AppTypography.bodyMedium.copyWith(color: c.textPrimary),
+      keyboardType: keyboardType,
+      style:
+          AppTypography.bodyMedium.copyWith(color: c.textPrimary, fontSize: 13),
       decoration: InputDecoration(
         hintText: hint,
         hintStyle:
@@ -1781,38 +1559,62 @@ class _ConfigEditDialogState extends State<_ConfigEditDialog> {
         filled: true,
         fillColor: c.surfaceVariant,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+          borderRadius: BorderRadius.circular(8),
           borderSide: BorderSide(color: c.border),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+          borderRadius: BorderRadius.circular(8),
           borderSide: BorderSide(color: c.border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+          borderRadius: BorderRadius.circular(8),
           borderSide: BorderSide(color: c.borderFocus),
         ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.sm,
-        ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         isDense: true,
       ),
     );
   }
 
-  IconData _iconForProviderStatic(String id) {
-    switch (id) {
-      case 'minimax':
-        return Icons.smart_toy;
-      case 'deepseek':
-        return Icons.psychology;
-      case 'mimo':
-        return Icons.phone_android;
-      case 'openai':
-        return Icons.bolt_outlined;
-      default:
-        return Icons.cloud_outlined;
-    }
+  Widget _buildSliderField({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String display,
+    required ValueChanged<double> onChanged,
+  }) {
+    final c = AppSemanticColors.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              label,
+              style: AppTypography.bodySmall
+                  .copyWith(color: c.textSecondary),
+            ),
+            const Spacer(),
+            Text(
+              display,
+              style: AppTypography.bodySmall.copyWith(
+                color: c.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        Slider(
+          value: value.clamp(min, max),
+          min: min,
+          max: max,
+          divisions: divisions,
+          onChanged: onChanged,
+        ),
+      ],
+    );
   }
 }

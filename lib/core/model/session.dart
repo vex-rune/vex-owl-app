@@ -16,6 +16,7 @@ class Session {
     this.context = '',
     this.archived = false,
     this.messageCount = 0,
+    this.pinned = false,
   });
 
   /// 会话唯一标识
@@ -36,6 +37,9 @@ class Session {
   /// 是否已归档
   final bool archived;
 
+  /// 是否已顶置（置顶显示在抽屉顶部）
+  final bool pinned;
+
   /// 会话中的消息数量
   final int messageCount;
 
@@ -49,6 +53,7 @@ class Session {
     DateTime? updatedAt,
     String? context,
     bool? archived,
+    bool? pinned,
     int? messageCount,
   }) {
     return Session(
@@ -58,6 +63,7 @@ class Session {
       updatedAt: updatedAt ?? this.updatedAt,
       context: context ?? this.context,
       archived: archived ?? this.archived,
+      pinned: pinned ?? this.pinned,
       messageCount: messageCount ?? this.messageCount,
     );
   }
@@ -73,6 +79,7 @@ class Session {
           updatedAt == other.updatedAt &&
           context == other.context &&
           archived == other.archived &&
+          pinned == other.pinned &&
           messageCount == other.messageCount;
 
   @override
@@ -83,11 +90,12 @@ class Session {
         updatedAt,
         context,
         archived,
+        pinned,
         messageCount,
       );
 
   @override
   String toString() =>
       'Session(id: $id, name: $name, archived: $archived, '
-      'messageCount: $messageCount)';
+      'pinned: $pinned, messageCount: $messageCount)';
 }

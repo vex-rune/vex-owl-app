@@ -7,9 +7,8 @@ import '../../design_system/design_system.dart';
 
 /// 对话消息气泡
 ///
-/// 用户消息居右蓝色气泡，AI 消息居左暗色气泡。
-/// AI 消息使用内置简易 Markdown 渲染（标题、列表、粗体、行内代码、代码块、引用），
-/// 不依赖任何第三方 Markdown 库。
+/// 用户消息居右紫色气泡，AI 消息居左深色气泡。
+/// AI 消息使用内置简易 Markdown 渲染（标题、列表、粗体、行内代码、代码块、引用）。
 /// 支持流式打字效果指示、Wiki 引用标签、长按操作。
 enum ChatBubbleRole { user, assistant }
 
@@ -39,8 +38,6 @@ class ChatBubble extends StatefulWidget {
   /// 本轮 assistant 请求的工具调用列表（仅 assistant 角色有意义）
   final List<LlmToolCall> toolCalls;
 
-  bool get _isUser => role == ChatBubbleRole.user;
-
   @override
   State<ChatBubble> createState() => _ChatBubbleState();
 }
@@ -58,8 +55,8 @@ class _ChatBubbleState extends State<ChatBubble> {
       onLongPress: widget.onLongPress,
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.messagePadding + 8,
-          vertical: AppSpacing.sm / 2,
+          horizontal: 16,
+          vertical: 6,
         ),
         child: Row(
           mainAxisAlignment:
@@ -98,34 +95,31 @@ class _ChatBubbleState extends State<ChatBubble> {
   }
 
   Widget _buildBubble(AppSemanticColors c) {
-    // 自适应宽度：取可用空间 78%，作为气泡最大宽度上下限
     final screenWidth = MediaQuery.of(context).size.width;
     final maxBubbleWidth = (screenWidth * 0.78).clamp(240.0, 560.0);
 
     return Container(
       constraints: BoxConstraints(maxWidth: maxBubbleWidth),
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.base,
-        vertical: AppSpacing.md,
+        horizontal: 14,
+        vertical: 10,
       ),
       decoration: BoxDecoration(
-        // 用户气泡：主题感知的渐变
-        // AI 气泡：主题感知的次级面板色
-        gradient: _isUser ? c.userBubbleGradient : null,
-        color: _isUser ? null : c.aiBubble,
+        // 用户气泡：实色紫色；AI 气泡：深色面板
+        color: _isUser ? c.primary : c.surface,
         borderRadius: BorderRadius.only(
-          topLeft: const Radius.circular(AppSpacing.radiusLg),
-          topRight: const Radius.circular(AppSpacing.radiusLg),
+          topLeft: const Radius.circular(14),
+          topRight: const Radius.circular(14),
           bottomLeft:
-              Radius.circular(_isUser ? AppSpacing.radiusLg : AppSpacing.xs),
+              Radius.circular(_isUser ? 14 : 4),
           bottomRight:
-              Radius.circular(_isUser ? AppSpacing.xs : AppSpacing.radiusLg),
+              Radius.circular(_isUser ? 4 : 14),
         ),
         border: Border.all(
           color: _isUser
-              ? c.primary.withValues(alpha: 0.4)
+              ? c.primary
               : c.border,
-          width: _isUser ? 1 : 0.5,
+          width: 0.5,
         ),
       ),
       child: Column(
@@ -134,8 +128,10 @@ class _ChatBubbleState extends State<ChatBubble> {
           if (_isUser)
             Text(
               widget.content,
-              style: AppTypography.chatMessage.copyWith(
+              style: TextStyle(
+                fontSize: 15,
                 color: c.onPrimary,
+                height: 1.45,
               ),
             )
           else
@@ -145,7 +141,7 @@ class _ChatBubbleState extends State<ChatBubble> {
             ),
           if (widget.isStreaming && widget.content.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: AppSpacing.xs),
+              padding: const EdgeInsets.only(top: 4),
               child: _buildStreamingCursor(c),
             ),
         ],
@@ -155,8 +151,8 @@ class _ChatBubbleState extends State<ChatBubble> {
 
   Widget _buildStreamingCursor(AppSemanticColors c) {
     return SizedBox(
-      width: 8,
-      height: 16,
+      width: 6,
+      height: 14,
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: c.primary,
@@ -166,7 +162,7 @@ class _ChatBubbleState extends State<ChatBubble> {
     );
   }
 
-  /// 折叠展示「思考过程」：默认收起，点击展开。
+  /// 折叠展示「思考过程」
   Widget _buildReasoningBlock(String text, AppSemanticColors c) {
     final isStreaming = widget.isStreaming;
     final label = isStreaming
@@ -175,20 +171,17 @@ class _ChatBubbleState extends State<ChatBubble> {
 
     return InkWell(
       onTap: () => setState(() => _reasoningExpanded = !_reasoningExpanded),
-      borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+      borderRadius: BorderRadius.circular(8),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 300),
+        constraints: const BoxConstraints(maxWidth: 320),
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm,
-          vertical: AppSpacing.xs,
+          horizontal: 10,
+          vertical: 8,
         ),
         decoration: BoxDecoration(
-          color: c.surfaceVariant.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-          border: Border.all(
-            color: c.border.withValues(alpha: 0.5),
-            width: 0.5,
-          ),
+          color: c.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: c.border, width: 0.5),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -205,16 +198,14 @@ class _ChatBubbleState extends State<ChatBubble> {
                     ),
                   )
                 else
-                  Icon(
-                    Icons.psychology_outlined,
-                    size: 12,
-                    color: c.textTertiary,
-                  ),
+                  Icon(Icons.psychology_outlined,
+                      size: 12, color: c.textTertiary),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     label,
-                    style: AppTypography.bodySmall.copyWith(
+                    style: TextStyle(
+                      fontSize: 12,
                       color: c.textTertiary,
                       fontStyle: FontStyle.italic,
                     ),
@@ -223,9 +214,7 @@ class _ChatBubbleState extends State<ChatBubble> {
                   ),
                 ),
                 Icon(
-                  _reasoningExpanded
-                      ? Icons.expand_less
-                      : Icons.expand_more,
+                  _reasoningExpanded ? Icons.expand_less : Icons.expand_more,
                   size: 14,
                   color: c.textTertiary,
                 ),
@@ -233,18 +222,18 @@ class _ChatBubbleState extends State<ChatBubble> {
             ),
             if (_reasoningExpanded)
               Padding(
-                padding: const EdgeInsets.only(top: AppSpacing.xs),
+                padding: const EdgeInsets.only(top: 6),
                 child: Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(AppSpacing.sm),
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
                     color: c.surface,
-                    borderRadius:
-                        BorderRadius.circular(AppSpacing.radiusSm),
+                    borderRadius: BorderRadius.circular(6),
                   ),
                   child: SelectableText(
                     text,
-                    style: AppTypography.bodySmall.copyWith(
+                    style: TextStyle(
+                      fontSize: 12,
                       color: c.textSecondary,
                       fontStyle: FontStyle.italic,
                       height: 1.5,
@@ -265,37 +254,30 @@ class _ChatBubbleState extends State<ChatBubble> {
 
     return InkWell(
       onTap: () => setState(() => _toolCallsExpanded = !_toolCallsExpanded),
-      borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+      borderRadius: BorderRadius.circular(8),
       child: Container(
         constraints: const BoxConstraints(maxWidth: 320),
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm,
-          vertical: AppSpacing.xs,
+          horizontal: 10,
+          vertical: 8,
         ),
         decoration: BoxDecoration(
-          color: c.primary.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-          border: Border.all(
-            color: c.primary.withValues(alpha: 0.25),
-            width: 0.5,
-          ),
+          color: c.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: c.border, width: 0.5),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(
-                  Icons.handyman_outlined,
-                  size: 12,
-                  color: c.primary.withValues(alpha: 0.8),
-                ),
+                Icon(Icons.handyman_outlined,
+                    size: 12, color: c.textSecondary),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     '工具调用 · $names',
-                    style: AppTypography.bodySmall
-                        .copyWith(color: c.textTertiary),
+                    style: TextStyle(fontSize: 12, color: c.textTertiary),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -309,16 +291,17 @@ class _ChatBubbleState extends State<ChatBubble> {
             ),
             if (_toolCallsExpanded)
               Padding(
-                padding: const EdgeInsets.only(top: AppSpacing.sm),
+                padding: const EdgeInsets.only(top: 6),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     for (var i = 0; i < calls.length; i++) ...[
-                      if (i > 0) const SizedBox(height: AppSpacing.sm),
+                      if (i > 0) const SizedBox(height: 6),
                       Text(
                         calls[i].name,
-                        style: AppTypography.bodySmall.copyWith(
-                          color: c.primary,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: c.textPrimary,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -326,15 +309,15 @@ class _ChatBubbleState extends State<ChatBubble> {
                         const SizedBox(height: 2),
                         Container(
                           width: double.infinity,
-                          padding: const EdgeInsets.all(AppSpacing.sm),
+                          padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
                             color: c.surface,
-                            borderRadius:
-                                BorderRadius.circular(AppSpacing.radiusSm),
+                            borderRadius: BorderRadius.circular(6),
                           ),
                           child: SelectableText(
                             _prettyJson(calls[i].arguments),
-                            style: AppTypography.code.copyWith(
+                            style: TextStyle(
+                              fontFamily: 'monospace',
                               fontSize: 11,
                               color: c.textSecondary,
                               height: 1.5,
@@ -373,30 +356,25 @@ class _ChatBubbleState extends State<ChatBubble> {
               : null,
           child: Container(
             padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.sm,
-              vertical: AppSpacing.xs,
+              horizontal: 8,
+              vertical: 4,
             ),
             decoration: BoxDecoration(
-              color: c.primary.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-              border: Border.all(
-                color: c.primary.withValues(alpha: 0.3),
-                width: 0.5,
-              ),
+              color: c.surfaceVariant,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: c.border, width: 0.5),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  Icons.article_outlined,
-                  size: 12,
-                  color: c.primary.withValues(alpha: 0.8),
-                ),
+                Icon(Icons.article_outlined,
+                    size: 12, color: c.textSecondary),
                 const SizedBox(width: 4),
                 Text(
                   ref,
-                  style: AppTypography.bodySmall.copyWith(
-                    color: c.primary,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: c.textPrimary,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -433,8 +411,10 @@ class SimpleMarkdownText extends StatelessWidget {
     return SelectableText.rich(
       TextSpan(
         children: blocks.expand((b) => b.toSpans()).toList(),
-        style: AppTypography.chatMessage.copyWith(
+        style: TextStyle(
+          fontSize: 15,
           color: color ?? c.textPrimary,
+          height: 1.45,
         ),
       ),
     );
@@ -554,9 +534,18 @@ class _HeadingBlock extends _MarkdownBlock {
   @override
   List<InlineSpan> toSpans() {
     final baseStyle = switch (level) {
-      1 => AppTypography.titleLarge.copyWith(color: c.textPrimary),
-      2 => AppTypography.titleMedium.copyWith(color: c.textPrimary),
-      _ => AppTypography.bodyLarge.copyWith(
+      1 => TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.w600,
+          color: c.textPrimary,
+        ),
+      2 => TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          color: c.textPrimary,
+        ),
+      _ => TextStyle(
+          fontSize: 15,
           color: c.textPrimary,
           fontWeight: FontWeight.w600,
         ),
@@ -598,8 +587,10 @@ class _CodeBlock extends _MarkdownBlock {
       for (final line in lines) ...[
         TextSpan(
           text: line.isEmpty ? ' ' : line,
-          style: AppTypography.code.copyWith(
-            color: c.primary,
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 13,
+            color: c.textPrimary,
             backgroundColor: c.codeBackground,
           ),
         ),
@@ -619,7 +610,8 @@ class _QuoteBlock extends _MarkdownBlock {
 
   @override
   List<InlineSpan> toSpans() {
-    final style = AppTypography.bodyLarge.copyWith(
+    final style = TextStyle(
+      fontSize: 14,
       color: c.textTertiary,
       fontStyle: FontStyle.italic,
     );
@@ -681,7 +673,9 @@ List<InlineSpan> _buildInlineSpans(
       spans.add(
         TextSpan(
           text: match.group(6),
-          style: AppTypography.code.copyWith(
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 13,
             color: c.primary,
             backgroundColor: c.codeBackground,
           ),
@@ -691,7 +685,11 @@ List<InlineSpan> _buildInlineSpans(
       spans.add(
         TextSpan(
           text: match.group(8),
-          style: AppTypography.chatLink.copyWith(color: c.primary),
+          style: TextStyle(
+            fontSize: 14,
+            color: c.primary,
+            fontWeight: FontWeight.w500,
+          ),
         ),
       );
     } else {

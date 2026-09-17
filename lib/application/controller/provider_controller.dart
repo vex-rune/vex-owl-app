@@ -4,13 +4,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/core.dart';
 import '../../data/llm/llm.dart';
 
-/// Provider 管理控制器
+/// Provider / Agent 路由控制器（v6.2）
 ///
-/// 暴露 LlmProviderRegistry，让 UI 层能：
-/// 1. 枚举所有可用 Provider（用于"添加 API 配置"对话框的供应商下拉）
-/// 2. 根据 ApiConfig 自动解析 Provider
+/// 主要职责：
+/// 1. 暴露 [LlmProviderRegistry] 全部 Provider，便于 Settings UI 按 Provider
+///    分组展示所有 Agent。
+/// 2. 根据 [ApiConfig] 解析 Provider（仍在 `chatStream / chatComplete` 之前用）
 /// 3. 测试连接
-/// 4. 获取 Provider 的模型预设列表
+/// 4. 提供每个 Provider 暴露的模型预设列表
+///
+/// 设计取向：每个 `ProviderModelPreset` 就是一个独立的 Agent。
+/// 用户无需自己添加 / 删除 Agent，只能编辑 Provider 内置 Agent 的具体参数。
 class ProviderController extends ChangeNotifier {
   ProviderController() : _registry = LlmProviderRegistry.instance;
 

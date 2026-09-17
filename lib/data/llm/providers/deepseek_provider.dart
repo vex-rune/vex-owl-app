@@ -119,8 +119,9 @@ class DeepSeekProvider implements LlmProvider {
       model: _modelName(config),
       messages: msgs,
       maxTokens: config.maxCompletionTokens,
-      temperature: config.temperature,
-      topP: config.topP,
+      // 启用思考时不能传 temperature / top_p（与 reasoning_effort 冲突返回 400）
+      temperature: thinkingEnabled ? null : config.temperature,
+      topP: thinkingEnabled ? null : config.topP,
       tools: LlmProvider.serializeTools(tools),
       toolChoice: toolChoice,
       thinking: thinkingEnabled
@@ -290,8 +291,9 @@ class DeepSeekProvider implements LlmProvider {
       messages: msgs,
       stream: false,
       maxTokens: config.maxCompletionTokens,
-      temperature: config.temperature,
-      topP: config.topP,
+      // 启用思考时不能传 temperature / top_p（与 reasoning_effort 冲突返回 400）
+      temperature: thinkingEnabled ? null : config.temperature,
+      topP: thinkingEnabled ? null : config.topP,
       tools: LlmProvider.serializeTools(tools),
       toolChoice: toolChoice,
       thinking: thinkingEnabled

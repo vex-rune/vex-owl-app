@@ -4,7 +4,7 @@ import '../../design_system/design_system.dart';
 /// 对话输入栏
 ///
 /// 底部固定多行输入框 + 附件按钮 + 发送按钮，
-/// 参考设计稿中深色圆角输入框 + 青色发送按钮的布局。
+/// 与首页底部输入条保持一致风格：圆角胶囊 + 紫色圆形发送按钮。
 class ChatInputBar extends StatefulWidget {
   const ChatInputBar({
     super.key,
@@ -31,9 +31,7 @@ class ChatInputBar extends StatefulWidget {
 
 class _ChatInputBarState extends State<ChatInputBar> {
   final _controller = TextEditingController();
-  final _focusNode = FocusNode();
   bool _hasText = false;
-  bool _isFocused = false;
 
   @override
   void initState() {
@@ -44,17 +42,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
         setState(() => _hasText = hasText);
       }
     });
-    _focusNode.addListener(() {
-      if (_focusNode.hasFocus != _isFocused) {
-        setState(() => _isFocused = _focusNode.hasFocus);
-      }
-    });
   }
 
   @override
   void dispose() {
     _controller.dispose();
-    _focusNode.dispose();
     super.dispose();
   }
 
@@ -63,7 +55,6 @@ class _ChatInputBarState extends State<ChatInputBar> {
     if (text.isEmpty) return;
     widget.onSend?.call(text);
     _controller.clear();
-    _focusNode.requestFocus();
   }
 
   @override
@@ -72,13 +63,13 @@ class _ChatInputBarState extends State<ChatInputBar> {
     final canSend = _hasText || widget.isStreaming;
     return Container(
       padding: EdgeInsets.only(
-        left: AppSpacing.base,
-        right: AppSpacing.sm,
-        top: AppSpacing.sm,
-        bottom: MediaQuery.of(context).padding.bottom + AppSpacing.sm,
+        left: 12,
+        right: 12,
+        top: 8,
+        bottom: MediaQuery.of(context).padding.bottom + 8,
       ),
       decoration: BoxDecoration(
-        color: c.surface,
+        color: c.background,
         border: Border(
           top: BorderSide(color: c.divider, width: 0.5),
         ),
@@ -86,226 +77,141 @@ class _ChatInputBarState extends State<ChatInputBar> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 状态行：左侧 Provider/Model，右侧 Token 计数
-          if ((widget.providerName != null && widget.modelName != null) ||
-              widget.tokenCount != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-              child: Row(
-                children: [
-                  if (widget.providerName != null && widget.modelName != null) ...[
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: c.success,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        '${widget.providerName} · ${widget.modelName}',
-                        style: AppTypography.bodySmall
-                            .copyWith(color: c.textTertiary),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                  const Spacer(),
-                  if (widget.tokenCount != null)
-                    Text(
-                      '≈ ${widget.tokenCount} tokens',
-                      style: AppTypography.bodySmall.copyWith(
-                        color: c.textTertiary,
-                        fontSize: 11,
-                      ),
-                    ),
-                ],
-              ),
-            ),
+          // 顶部模式 chips：模型 / 快速 / 深度分析（与首页保持一致）
+          Row(
+            children: [
+              _buildPill(c, widget.modelName ?? '请配置模型',
+                  Icons.auto_awesome_outlined,
+                  hasDropdown: true),
+              // const SizedBox(width: 8),
+              // _buildPill(c, '快速', Icons.flash_on_outlined),
+              // const SizedBox(width: 8),
+              // _buildPill(c, '深度分析', Icons.psychology_outlined),
+              const Spacer(),
+              if (widget.tokenCount != null)
+                Text(
+                  '≈ ${widget.tokenCount}',
+                  style:
+                      TextStyle(fontSize: 11, color: c.textTertiary),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
           // 输入行
           Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // 附件按钮
-              _IconButton(
-                icon: Icons.add_circle_outline,
-                onTap: widget.onAttach,
-                tooltip: '附件',
+              IconButton(
+                icon: Icon(Icons.add, size: 24, color: c.textSecondary),
+                onPressed: widget.onAttach,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
               ),
-              const SizedBox(width: AppSpacing.sm),
-              // 输入框
+              const SizedBox(width: 8),
               Expanded(
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: AppSpacing.durationFast),
-                  constraints: const BoxConstraints(minHeight: 44),
+                child: Container(
+                  height: 44,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  alignment: Alignment.centerLeft,
                   decoration: BoxDecoration(
                     color: c.surfaceVariant,
-                    borderRadius:
-                        BorderRadius.circular(AppSpacing.radiusMd),
-                    border: Border.all(
-                      color: _isFocused
-                          ? c.borderFocus
-                          : c.border,
-                      width: _isFocused ? 1.2 : 0.5,
-                    ),
-                    boxShadow: _isFocused ? AppShadows.inputFocus(context) : null,
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: c.border, width: 0.5),
                   ),
                   child: TextField(
                     controller: _controller,
-                    focusNode: _focusNode,
                     maxLines: 5,
                     minLines: 1,
                     textInputAction: TextInputAction.newline,
-                    style: AppTypography.bodyLarge.copyWith(
-                      color: c.textPrimary,
-                    ),
+                    style: TextStyle(fontSize: 14, color: c.textPrimary),
                     decoration: InputDecoration(
                       hintText: '输入消息...',
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.base,
-                        vertical: 10,
-                      ),
-                      hintStyle: AppTypography.bodyLarge.copyWith(
+                      hintStyle: TextStyle(
+                        fontSize: 14,
                         color: c.textTertiary,
                       ),
+                      border: InputBorder.none,
+                      isCollapsed: true,
+                      contentPadding: EdgeInsets.zero,
                     ),
-                    onSubmitted: widget.isStreaming
-                        ? null
-                        : (_) => _handleSend(),
+                    onSubmitted:
+                        widget.isStreaming ? null : (_) => _handleSend(),
                   ),
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm),
-              // 发送/停止按钮
-              _SendButton(
-                isStreaming: widget.isStreaming,
-                enabled: canSend,
-                onTap: widget.isStreaming
-                    ? widget.onStop
-                    : (_hasText ? _handleSend : null),
-              ),
+              const SizedBox(width: 8),
+              _buildSendButton(c, canSend),
             ],
           ),
         ],
       ),
     );
   }
-}
 
-/// 圆形小图标按钮（带按压反馈）
-class _IconButton extends StatefulWidget {
-  const _IconButton({
-    required this.icon,
-    required this.onTap,
-    this.tooltip,
-  });
-
-  final IconData icon;
-  final VoidCallback? onTap;
-  final String? tooltip;
-
-  @override
-  State<_IconButton> createState() => _IconButtonState();
-}
-
-class _IconButtonState extends State<_IconButton>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 80),
-    lowerBound: 0.0,
-    upperBound: 0.08,
-  );
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppSemanticColors.of(context);
-    final btn = GestureDetector(
-      onTapDown: (_) => _ctrl.forward(),
-      onTapUp: (_) => _ctrl.reverse(),
-      onTapCancel: () => _ctrl.reverse(),
-      onTap: widget.onTap,
-      child: AnimatedBuilder(
-        animation: _ctrl,
-        builder: (context, child) {
-          return Transform.scale(
-            scale: 1 - _ctrl.value,
-            child: child,
-          );
-        },
-        child: Container(
-          width: 40,
-          height: 40,
-          margin: const EdgeInsets.only(bottom: 2),
-          decoration: BoxDecoration(
-            color: c.surfaceVariant,
-            borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-            border: Border.all(color: c.border, width: 0.5),
+  Widget _buildPill(
+    AppSemanticColors c,
+    String label,
+    IconData icon, {
+    bool hasDropdown = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: c.surfaceVariant,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (hasDropdown) ...[
+            Icon(icon, size: 12, color: c.primary),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: c.primary,
+              fontWeight: FontWeight.w500,
+            ),
           ),
-          child: Icon(
-            widget.icon,
-            color: c.textSecondary,
-            size: 22,
-          ),
-        ),
+          if (hasDropdown) ...[
+            const SizedBox(width: 2),
+            Icon(Icons.keyboard_arrow_down,
+                size: 14, color: c.primary),
+          ],
+        ],
       ),
     );
-    if (widget.tooltip != null) {
-      return Tooltip(message: widget.tooltip!, child: btn);
-    }
-    return btn;
   }
-}
 
-/// 发送/停止按钮，带渐变和发光
-class _SendButton extends StatelessWidget {
-  const _SendButton({
-    required this.isStreaming,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  final bool isStreaming;
-  final bool enabled;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppSemanticColors.of(context);
-    return GestureDetector(
-      onTap: enabled ? onTap : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: AppSpacing.durationFast),
+  Widget _buildSendButton(AppSemanticColors c, bool canSend) {
+    return InkWell(
+      onTap: canSend
+          ? () {
+              if (widget.isStreaming) {
+                widget.onStop?.call();
+              } else {
+                _handleSend();
+              }
+            }
+          : null,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
         width: 40,
         height: 40,
         decoration: BoxDecoration(
-          gradient: enabled ? c.primaryGradient : null,
-          color: enabled ? null : c.surfaceVariant,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
-          boxShadow: enabled ? AppShadows.glowPrimary(context) : null,
+          color: canSend ? c.primary : c.surfaceVariant,
+          shape: BoxShape.circle,
           border: Border.all(
-            color: enabled
-                ? c.primary.withValues(alpha: 0.4)
-                : c.border,
+            color: canSend ? c.primary : c.border,
             width: 0.5,
           ),
         ),
         child: Icon(
-          isStreaming ? Icons.stop_rounded : Icons.arrow_upward_rounded,
-          color: enabled ? c.onPrimary : c.textTertiary,
-          size: 22,
+          widget.isStreaming ? Icons.stop_rounded : Icons.send_rounded,
+          size: 18,
+          color: canSend ? c.onPrimary : c.textTertiary,
         ),
       ),
     );

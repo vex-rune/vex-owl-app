@@ -1,0 +1,93 @@
+/// 会话数据模型。
+///
+/// 采用不可变设计，通过 [copyWith] 创建修改后的副本。
+/// 每个会话包含名称、时间戳、归档状态和消息计数等信息。
+library;
+
+/// 会话数据模型。
+///
+/// 不可变对象，使用 [copyWith] 生成修改后的副本。
+class Session {
+  const Session({
+    required this.id,
+    required this.name,
+    required this.createdAt,
+    required this.updatedAt,
+    this.context = '',
+    this.archived = false,
+    this.messageCount = 0,
+  });
+
+  /// 会话唯一标识
+  final String id;
+
+  /// 会话名称
+  final String name;
+
+  /// 会话创建时间
+  final DateTime createdAt;
+
+  /// 会话最后更新时间
+  final DateTime updatedAt;
+
+  /// 临时上下文（JSON 格式，最多 10 轮对话）
+  final String context;
+
+  /// 是否已归档
+  final bool archived;
+
+  /// 会话中的消息数量
+  final int messageCount;
+
+  /// 创建当前会话的修改副本。
+  ///
+  /// 未指定的参数保持原值不变。
+  Session copyWith({
+    String? id,
+    String? name,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    String? context,
+    bool? archived,
+    int? messageCount,
+  }) {
+    return Session(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      context: context ?? this.context,
+      archived: archived ?? this.archived,
+      messageCount: messageCount ?? this.messageCount,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Session &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          createdAt == other.createdAt &&
+          updatedAt == other.updatedAt &&
+          context == other.context &&
+          archived == other.archived &&
+          messageCount == other.messageCount;
+
+  @override
+  int get hashCode => Object.hash(
+        id,
+        name,
+        createdAt,
+        updatedAt,
+        context,
+        archived,
+        messageCount,
+      );
+
+  @override
+  String toString() =>
+      'Session(id: $id, name: $name, archived: $archived, '
+      'messageCount: $messageCount)';
+}

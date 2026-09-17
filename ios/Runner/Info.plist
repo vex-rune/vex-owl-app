@@ -16,6 +16,25 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>Owl</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>智鸮需要使用麦克风以便进行语音对话</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>智鸮需要访问您的位置以提供基于位置的信息</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>智鸮需要在后台获取位置以提供持续的位置感知服务</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>智鸮需要访问相册以读取和发送图片</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>智鸮需要保存图片到相册</string>
+	<key>NSCameraUsageDescription</key>
+	<string>智鸮需要使用相机以拍摄照片发送</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>智鸮需要访问媒体库以播放音频</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>location</string>
+	</array>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

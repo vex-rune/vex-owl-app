@@ -1,209 +1,338 @@
-/// 消息模型。
+/// 聊天消息数据模型。
 ///
-/// 不可变值类型。
-///
-/// 通过 [type] 区分消息内容形态:
-/// * [MessageType.text]:用户输入或助手最终回复(Markdown)
-/// * [MessageType.system]:注入给模型的系统提示
-/// * [MessageType.toolCall]:助手触发工具调用的轨迹
-/// * [MessageType.thinking]:模型推理过程(Chain-of-Thought)
-/// * [MessageType.plan]:agent 在执行前发布的计划列表
-/// * [MessageType.error]:对话失败/中断的错误提示(承载原始错误描述)
-///
-/// [role] 与 [type] 正交:`role` 描述"谁发的",
-/// `type` 描述"内容是什么形态"。
-class Message {
-  const Message({
-  required this.id,
-  required this.conversationId,
-  required this.role,
-  required this.content,
-  required this.toolCalls,
-  required this.createdAt,
-  required this.streaming,
-  this.type,
-  this.thinkingContent,
-  this.planItems,
-  this.turnId,
-  });
+/// 采用不可变设计，通过 [copyWith] 创建修改后的副本。
+/// 每条消息关联一个会话 [sessionId]，包含角色、多模态内容、类型等信息。
+library;
 
-  /// 消息 ID。
-  final String id;
+import 'dart:convert';
 
-  /// 所属会话 ID。
-  final String conversationId;
+import 'llm_tool_call.dart';
 
-  /// 消息角色(谁发的)。
-  final MessageRole role;
+/// 消息角色枚举
+enum MessageRole {
+  /// 用户发送的消息
+  user,
 
-  /// 所属助手回合 id。
-  ///
-  /// 同一回合内的所有 Message(thinking / text / toolCall / tool_result / plan)
-  /// 共享同一个 turnId。用户 / 系统消息为 null。
-  ///
-  /// 设为可空,保留对历史数据(尚未写入 turnId 的旧消息)的兼容。
-  final String? turnId;
+  /// AI 助手回复的消息
+  assistant,
 
-  /// 消息内容形态。
-  ///
-  /// 可空:旧实例(热重载、跨版本兼容)可能没设置该字段。
-  /// UI 层统一使用 [effectiveType],空值回落为 [MessageType.text]。
-  final MessageType? type;
-
-  /// 永远非空的 type 视图(用于渲染分发)。
-  ///
-  /// 为空时回落为 [MessageType.text],避免 UI 层处理 null。
-  MessageType get effectiveType => type ?? MessageType.text;
-
-  /// 已累积的文本内容。
-  ///
-  /// * [MessageType.text]:Markdown 文本(用户输入或助手回复)
-  /// * [MessageType.system]:系统提示原文
-  /// * 其他类型:可空
-  final String content;
-
-  /// 工具调用轨迹。
-  /// * [MessageType.toolCall] 时作为消息的主体
-  /// * [MessageType.text] 时表示"该回复中包含的工具调用"(向后兼容)
-  /// * `null` 表示该消息不含工具调用。
-  final List<ToolCallRecord>? toolCalls;
-
-  /// 思考 / 推理过程文本。仅 [MessageType.thinking] 使用。
-  final String? thinkingContent;
-
-  /// 计划步骤。仅 [MessageType.plan] 使用。
-  final List<PlanItem>? planItems;
-
-  /// 创建时间。
-  final DateTime createdAt;
-
-  /// 是否仍在流式输出中。
-  final bool streaming;
-}
-
-/// 消息内容形态。
-enum MessageType {
-  /// 纯文本(Markdown 格式):用户输入或助手最终回复。
-  text,
-
-  /// 系统提示:注入给模型的 system 指令或运行时提醒。
+  /// 系统消息（如提示、通知等）
   system,
 
-  /// 工具调用:assistant 触发工具调用的轨迹,主体是 [Message.toolCalls]。
-  toolCall,
-
-  /// 思考 / 推理过程:Chain-of-Thought,主体是 [Message.thinkingContent]。
-  thinking,
-
-  /// 计划列表:agent 在执行前发布的步骤,主体是 [Message.planItems]。
-  plan,
-
-  /// 错误提示:对话失败 / 取消时留下的错误消息,主体是 [Message.content](原始错误文本)。
-  ///
-  /// 通常 `role == MessageRole.assistant`、`streaming == false`,
-  /// 用于在对话气泡中以警示样式呈现网络异常、AI 调用错误等。
-  error,
+  /// 工具调用返回的消息
+  tool,
 }
 
-/// 消息角色。
-enum MessageRole { user, assistant, system, tool }
+/// 消息内容类型枚举（保留兼容旧逻辑）
+enum MessageType {
+  /// 纯文本消息
+  text,
 
-/// 计划条目。
-///
-/// 仅在 [Message.type] == [MessageType.plan] 时承载。
-class PlanItem {
-  const PlanItem({
+  /// 图片消息
+  image,
+
+  /// 文件消息
+  file,
+}
+
+/// 多模态内容片段（替换单一字符串）
+sealed class MessagePart {
+  const MessagePart();
+}
+
+/// 文本片段
+class TextPart extends MessagePart {
+  const TextPart(this.text);
+  final String text;
+}
+
+/// 图片 URL 片段
+class ImageUrlPart extends MessagePart {
+  const ImageUrlPart(this.url, {this.detail = 'auto'});
+  final String url;
+  final String detail; // 'auto' / 'low' / 'high'
+}
+
+/// 消息数据模型（不可变）
+class Message {
+  const Message({
     required this.id,
-    required this.title,
-    required this.status,
-    this.description,
+    required this.sessionId,
+    required this.role,
+    required this.parts,
+    required this.createdAt,
+    this.streaming = false,
+    this.toolCallId,
+    this.toolName,
+    this.toolCalls = const [],
+    this.reasoning = '',
   });
 
-  /// 步骤唯一 ID(用于跨消息跟踪同一个步骤)。
+  static String _generateId() {
+    return DateTime.now().millisecondsSinceEpoch.toString();
+  }
+
+  /// 创建用户消息（支持文本或文本+图片）
+  factory Message.user({
+    required String sessionId,
+    String? content,
+    List<MessagePart> parts = const [],
+  }) {
+    final allParts = <MessagePart>[
+      if (content != null && content.isNotEmpty) TextPart(content),
+      ...parts,
+    ];
+    return Message(
+      id: _generateId(),
+      sessionId: sessionId,
+      role: MessageRole.user,
+      parts: allParts,
+      createdAt: DateTime.now(),
+    );
+  }
+
+  factory Message.assistant({
+    required String sessionId,
+    String content = '',
+  }) {
+    return Message(
+      id: _generateId(),
+      sessionId: sessionId,
+      role: MessageRole.assistant,
+      parts: [if (content.isNotEmpty) TextPart(content)],
+      createdAt: DateTime.now(),
+    );
+  }
+
+  factory Message.system({
+    required String sessionId,
+    required String content,
+  }) {
+    return Message(
+      id: _generateId(),
+      sessionId: sessionId,
+      role: MessageRole.system,
+      parts: [TextPart(content)],
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 创建工具调用返回的消息
+  ///
+  /// [toolCallId] 对应 LLM 调用的工具调用 ID（OpenAI 协议：每个 tool_call 有唯一 id）
+  /// [toolName] 工具名称（部分协议不传 id 时用于溯源）
+  /// [content] 工具返回结果（JSON 字符串或纯文本）
+  factory Message.tool({
+    required String sessionId,
+    required String toolCallId,
+    required String toolName,
+    required String content,
+  }) {
+    return Message(
+      id: _generateId(),
+      sessionId: sessionId,
+      role: MessageRole.tool,
+      parts: [TextPart(content)],
+      createdAt: DateTime.now(),
+      toolCallId: toolCallId,
+      toolName: toolName,
+    );
+  }
+
   final String id;
+  final String sessionId;
+  final MessageRole role;
+  final List<MessagePart> parts;
+  final DateTime createdAt;
+  final bool streaming;
 
-  /// 步骤标题。
-  final String title;
+  /// 工具调用 ID（仅 role == tool 时有值）
+  final String? toolCallId;
 
-  /// 当前状态。
-  final PlanItemStatus status;
+  /// 工具名称（仅 role == tool 时有值，用于显示）
+  final String? toolName;
 
-  /// 可选的详细说明。
-  final String? description;
+  /// assistant 消息请求的工具调用列表（仅在工具循环回合中使用）
+  ///
+  /// 该字段不为空时，序列化到 OpenAI 时会输出 `tool_calls` 字段。
+  /// UI 上仍可显示原始 `content`（含工具卡片描述），不影响视觉。
+  final List<LlmToolCall> toolCalls;
 
-  PlanItem copyWith({
-    String? title,
-    PlanItemStatus? status,
-    String? description,
-  }) => PlanItem(
-    id: id,
-    title: title ?? this.title,
-    status: status ?? this.status,
-    description: description ?? this.description,
-  );
+  /// 思考过程内容（reasoning_split=true 时由 Provider 流式填充）
+  ///
+  /// 与 `content` 平级，UI 上可独立折叠展示。
+  /// 默认空字符串表示无思考。
+  final String reasoning;
 
-  Map<String, dynamic> toJson() => <String, dynamic>{
-    'id': id,
-    'title': title,
-    'status': status.name,
-    if (description != null) 'description': description,
-  };
+  /// 兼容旧 API：从 parts 提取纯文本内容
+  String get content => parts
+      .whereType<TextPart>()
+      .map((p) => p.text)
+      .join('');
 
-  factory PlanItem.fromJson(Map<String, dynamic> json) => PlanItem(
-    id: json['id']! as String,
-    title: json['title']! as String,
-    status: PlanItemStatus.values.byName(json['status']! as String),
-    description: json['description'] as String?,
-  );
-}
+  /// 是否包含图片
+  bool get hasImage => parts.any((p) => p is ImageUrlPart);
 
-/// 计划条目状态。
-enum PlanItemStatus {
-  /// 待执行。
-  pending,
+  /// 获取所有图片 URL
+  List<String> get imageUrls => parts
+      .whereType<ImageUrlPart>()
+      .map((p) => p.url)
+      .toList();
 
-  /// 执行中。
-  inProgress,
+  Message copyWith({
+    String? id,
+    String? sessionId,
+    MessageRole? role,
+    List<MessagePart>? parts,
+    DateTime? createdAt,
+    bool? streaming,
+    String? content, // 直接覆盖（用于流式拼接到最后一段文本）
+    String? toolCallId,
+    String? toolName,
+    List<LlmToolCall>? toolCalls,
+    String? reasoning,
+  }) {
+    List<MessagePart> newParts = parts ?? this.parts;
+    if (content != null) {
+      // Replace last text part or append new
+      newParts = [...newParts];
+      if (newParts.isNotEmpty && newParts.last is TextPart) {
+        newParts[newParts.length - 1] = TextPart(content);
+      } else {
+        newParts.add(TextPart(content));
+      }
+    }
+    return Message(
+      id: id ?? this.id,
+      sessionId: sessionId ?? this.sessionId,
+      role: role ?? this.role,
+      parts: newParts,
+      createdAt: createdAt ?? this.createdAt,
+      streaming: streaming ?? this.streaming,
+      toolCallId: toolCallId ?? this.toolCallId,
+      toolName: toolName ?? this.toolName,
+      toolCalls: toolCalls ?? this.toolCalls,
+      reasoning: reasoning ?? this.reasoning,
+    );
+  }
 
-  /// 已完成。
-  done,
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Message &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          sessionId == other.sessionId &&
+          role == other.role &&
+          _partsEqual(parts, other.parts) &&
+          createdAt == other.createdAt &&
+          streaming == other.streaming;
 
-  /// 已跳过。
-  skipped,
-}
+  static bool _partsEqual(List<MessagePart> a, List<MessagePart> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] is TextPart && b[i] is TextPart) {
+        if ((a[i] as TextPart).text != (b[i] as TextPart).text) return false;
+      } else if (a[i] is ImageUrlPart && b[i] is ImageUrlPart) {
+        if ((a[i] as ImageUrlPart).url != (b[i] as ImageUrlPart).url) return false;
+      } else {
+        return false;
+      }
+    }
+    return true;
+  }
 
-/// 工具调用记录。
-class ToolCallRecord {
-  const ToolCallRecord({
-    required this.toolCallId,
-    required this.name,
-    required this.args,
-    required this.output,
-  });
+  @override
+  int get hashCode => Object.hash(id, sessionId, role, parts.length, createdAt, streaming);
 
-  /// OpenAI tool_call.id(用于回传 tool result)。
-  final String toolCallId;
+  // ── JSON 序列化 / 反序列化 ──
 
-  /// 工具名。
-  final String name;
+  /// 将消息序列化为 JSON Map
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'sessionId': sessionId,
+      'role': role.name,
+      'parts': parts.map((p) {
+        if (p is TextPart) return {'type': 'text', 'text': p.text};
+        if (p is ImageUrlPart) {
+          return {'type': 'image_url', 'url': p.url, 'detail': p.detail};
+        }
+        return <String, dynamic>{};
+      }).toList(),
+      'createdAt': createdAt.toIso8601String(),
+      if (toolCallId != null) 'toolCallId': toolCallId,
+      if (toolName != null) 'toolName': toolName,
+    };
+  }
 
-  /// 工具参数。
-  final Map<String, dynamic> args;
+  /// 从 JSON Map 反序列化消息
+  factory Message.fromJson(Map<String, dynamic> json) {
+    final roleStr = json['role'] as String? ?? 'assistant';
+    final role = MessageRole.values.firstWhere(
+      (r) => r.name == roleStr,
+      orElse: () => MessageRole.assistant,
+    );
+    final partsList = (json['parts'] as List<dynamic>?) ?? [];
+    final parts = partsList.map<MessagePart>((p) {
+      final type = p['type'] as String? ?? 'text';
+      if (type == 'image_url') {
+        return ImageUrlPart(
+          p['url'] as String? ?? '',
+          detail: p['detail'] as String? ?? 'auto',
+        );
+      }
+      return TextPart(p['text'] as String? ?? '');
+    }).toList();
+    return Message(
+      id: json['id'] as String? ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      sessionId: json['sessionId'] as String? ?? '',
+      role: role,
+      parts: parts,
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
+      toolCallId: json['toolCallId'] as String?,
+      toolName: json['toolName'] as String?,
+    );
+  }
 
-  /// 工具输出(text 或 markdown 字符串)。
-  final String output;
+  /// 从 JSON 字符串列表反序列化
+  static List<Message> listFromJson(String jsonString) {
+    if (jsonString.trim().isEmpty) return [];
+    try {
+      final decoded = jsonString is String
+          ? (jsonString.startsWith('[')
+              ? _parseJsonList(jsonString)
+              : _parseJsonLines(jsonString))
+          : <dynamic>[];
+      return decoded
+          .map((e) => Message.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
 
-  Map<String, dynamic> toJson() => <String, dynamic>{
-    'toolCallId': toolCallId,
-    'name': name,
-    'args': args,
-    'output': output,
-  };
+  static List<dynamic> _parseJsonList(String s) {
+    return List<dynamic>.from(jsonDecode(s) as List);
+  }
 
-  factory ToolCallRecord.fromJson(Map<String, dynamic> json) => ToolCallRecord(
-    toolCallId: json['toolCallId']! as String,
-    name: json['name']! as String,
-    args: Map<String, dynamic>.from(json['args']! as Map),
-    output: (json['output'] as String?) ?? '',
-  );
+  static List<dynamic> _parseJsonLines(String s) {
+    // 兼容旧格式 "role: content\n"，转换为 Message 列表
+    // 注意：旧格式信息有限，只恢复基本内容
+    return s.split('\n').where((l) => l.trim().isNotEmpty).map((line) {
+      final colonIdx = line.indexOf(': ');
+      if (colonIdx < 0) return <String, dynamic>{};
+      final role = line.substring(0, colonIdx);
+      final content = line.substring(colonIdx + 2);
+      return {
+        'role': role,
+        'parts': [
+          {'type': 'text', 'text': content}
+        ],
+      };
+    }).toList();
+  }
+
+  @override
+  String toString() => 'Message(id: $id, role: $role, parts: ${parts.length})';
 }

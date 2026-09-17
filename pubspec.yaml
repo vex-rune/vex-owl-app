@@ -1,11 +1,8 @@
 name: Owl
 description: "Owl - 本地实时 AI 对话应用"
-# The following line prevents the package from being accidentally published to
-# pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none'
 
-# Application version & build number
-version: 0.1.0+1
+version: 0.2.0+1
 
 environment:
   sdk: ^3.11.5
@@ -17,46 +14,33 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # 状态管理
-  flutter_riverpod: ^2.6.0
+  flutter_riverpod: ^2.6.1
 
   # 路由
-  go_router: ^14.6.2
+  go_router: ^14.8.1
 
   # 文件与路径
-  path_provider: ^2.1.4
-  path: ^1.9.0
+  path_provider: ^2.1.6
+  path: ^1.9.1
 
   # 时间格式化
   intl: ^0.19.0
 
-  # 数据库(Drift)
-  drift: ^2.20.0
-  sqlite3_flutter_libs: ^0.5.24
-
-  # LangChain(请求大模型与工具调用)
-  langchain: ^0.8.1
-  langchain_openai: ^0.8.1
-
-  # HTTP 客户端(博查搜索 / 后续第三方 API 调用)
-  http: ^1.2.2
+  # HTTP 客户端
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  mocktail: ^1.0.4
-  drift_dev: ^2.20.0
-  build_runner: ^2.4.13
-  flutter_launcher_icons: ^0.14.4
+  build_runner: ^2.15.1
+  mocktail: ^1.0.5
+
+# 自 v3.0 起：所有结构化数据通过 Markdown 文件持久化到 wiki/ 目录，
+# SQLite / Drift 已全部移除。
 
 flutter:
   uses-material-design: true
 
   assets:
     - assets/logo/
-
-# App 图标生成配置 (运行: dart run flutter_launcher_icons)
-flutter_launcher_icons:
-  android: true # 覆盖默认 ic_launcher
-  image_path: "assets/logo/logo.png"
-  min_sdk_android: 21

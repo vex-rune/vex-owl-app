@@ -1,0 +1,766 @@
+﻿{
+    "type":  "frame",
+    "id":  "kd4Jf",
+    "x":  0,
+    "y":  0,
+    "name":  "Home",
+    "clip":  true,
+    "width":  375,
+    "height":  812,
+    "fill":  "#FFFFFF",
+    "layout":  "vertical",
+    "children":  [
+                     {
+                         "type":  "frame",
+                         "id":  "QjYfi",
+                         "name":  "Status Bar",
+                         "width":  "fill_container",
+                         "padding":  [
+                                         14,
+                                         24,
+                                         8,
+                                         24
+                                     ],
+                         "justifyContent":  "space_between",
+                         "alignItems":  "center",
+                         "children":  [
+                                          {
+                                              "type":  "text",
+                                              "id":  "e0UJTn",
+                                              "name":  "Time",
+                                              "fill":  "$text-primary",
+                                              "content":  "9:41",
+                                              "fontFamily":  "$font-body",
+                                              "fontSize":  15,
+                                              "fontWeight":  "600"
+                                          },
+                                          {
+                                              "type":  "frame",
+                                              "id":  "ngnxd",
+                                              "name":  "Status Right",
+                                              "gap":  6,
+                                              "alignItems":  "center",
+                                              "children":  [
+                                                               {
+                                                                   "type":  "icon",
+                                                                   "id":  "Z9IUI",
+                                                                   "name":  "Signal",
+                                                                   "width":  16,
+                                                                   "height":  16,
+                                                                   "icon":  "signal",
+                                                                   "library":  "lucide",
+                                                                   "fill":  "$text-primary"
+                                                               },
+                                                               {
+                                                                   "type":  "icon",
+                                                                   "id":  "VrplL",
+                                                                   "name":  "Wifi",
+                                                                   "width":  16,
+                                                                   "height":  16,
+                                                                   "icon":  "wifi",
+                                                                   "library":  "lucide",
+                                                                   "fill":  "$text-primary"
+                                                               },
+                                                               {
+                                                                   "type":  "icon",
+                                                                   "id":  "dhxF6",
+                                                                   "name":  "Battery",
+                                                                   "width":  18,
+                                                                   "height":  16,
+                                                                   "icon":  "battery-full",
+                                                                   "library":  "lucide",
+                                                                   "fill":  "$text-primary"
+                                                               }
+                                                           ]
+                                          }
+                                      ]
+                     },
+                     {
+                         "type":  "frame",
+                         "id":  "TtNHC",
+                         "name":  "Title Row",
+                         "width":  "fill_container",
+                         "padding":  [
+                                         4,
+                                         20,
+                                         16,
+                                         20
+                                     ],
+                         "justifyContent":  "space_between",
+                         "alignItems":  "center",
+                         "children":  [
+                                          {
+                                              "type":  "frame",
+                                              "id":  "MDoyv",
+                                              "name":  "Menu Button",
+                                              "width":  40,
+                                              "height":  40,
+                                              "fill":  "$surface-2",
+                                              "cornerRadius":  20,
+                                              "justifyContent":  "center",
+                                              "alignItems":  "center",
+                                              "children":  [
+                                                               {
+                                                                   "type":  "icon",
+                                                                   "id":  "v4bie",
+                                                                   "name":  "Menu",
+                                                                   "width":  20,
+                                                                   "height":  20,
+                                                                   "icon":  "menu",
+                                                                   "library":  "lucide",
+                                                                   "fill":  "$text-primary"
+                                                               }
+                                                           ]
+                                          },
+                                          {
+                                              "type":  "text",
+                                              "id":  "AYYcK",
+                                              "name":  "Title",
+                                              "fill":  "$text-primary",
+                                              "content":  "对话",
+                                              "fontFamily":  "$font-body",
+                                              "fontSize":  28,
+                                              "fontWeight":  "700"
+                                          },
+                                          {
+                                              "type":  "frame",
+                                              "id":  "pxJKk",
+                                              "name":  "New Button",
+                                              "width":  40,
+                                              "height":  40,
+                                              "fill":  "$primary",
+                                              "cornerRadius":  20,
+                                              "effect":  {
+                                                             "type":  "shadow",
+                                                             "shadowType":  "outer",
+                                                             "color":  "#4D6EF540",
+                                                             "offset":  {
+                                                                            "x":  0,
+                                                                            "y":  2
+                                                                        },
+                                                             "blur":  8
+                                                         },
+                                              "justifyContent":  "center",
+                                              "alignItems":  "center",
+                                              "children":  [
+                                                               {
+                                                                   "type":  "icon",
+                                                                   "id":  "smZWP",
+                                                                   "name":  "Plus",
+                                                                   "width":  18,
+                                                                   "height":  18,
+                                                                   "icon":  "plus",
+                                                                   "library":  "lucide",
+                                                                   "fill":  "$surface"
+                                                               }
+                                                           ]
+                                          }
+                                      ]
+                     },
+                     {
+                         "type":  "frame",
+                         "id":  "ZaRoe",
+                         "name":  "Search Bar",
+                         "width":  343,
+                         "fill":  "$surface-2",
+                         "cornerRadius":  14,
+                         "gap":  8,
+                         "padding":  [
+                                         10,
+                                         16
+                                     ],
+                         "alignItems":  "center",
+                         "children":  [
+                                          {
+                                              "type":  "icon",
+                                              "id":  "l9Hyqn",
+                                              "name":  "Search",
+                                              "width":  16,
+                                              "height":  16,
+                                              "icon":  "search",
+                                              "library":  "lucide",
+                                              "fill":  "$text-tertiary"
+                                          },
+                                          {
+                                              "type":  "text",
+                                              "id":  "gJ2Od",
+                                              "name":  "Placeholder",
+                                              "fill":  "$text-tertiary",
+                                              "content":  "搜索对话...",
+                                              "fontFamily":  "$font-body",
+                                              "fontSize":  14,
+                                              "fontWeight":  "normal"
+                                          }
+                                      ]
+                     },
+                     {
+                         "type":  "frame",
+                         "id":  "XZXtq",
+                         "name":  "Filter Row",
+                         "width":  "fill_container",
+                         "gap":  8,
+                         "padding":  [
+                                         12,
+                                         20
+                                     ],
+                         "children":  [
+                                          {
+                                              "type":  "frame",
+                                              "id":  "OWAB3",
+                                              "name":  "Filter 全部",
+                                              "fill":  "$primary",
+                                              "cornerRadius":  14,
+                                              "padding":  [
+                                                              6,
+                                                              14
+                                                          ],
+                                              "alignItems":  "center",
+                                              "children":  [
+                                                               {
+                                                                   "type":  "text",
+                                                                   "id":  "n2sqC",
+                                                                   "name":  "Label",
+                                                                   "fill":  "$surface",
+                                                                   "content":  "全部",
+                                                                   "fontFamily":  "$font-body",
+                                                                   "fontSize":  12,
+                                                                   "fontWeight":  "600"
+                                                               }
+                                                           ]
+                                          },
+                                          {
+                                              "type":  "frame",
+                                              "id":  "Vr3Hh",
+                                              "name":  "Filter 收藏",
+                                              "fill":  "$surface-2",
+                                              "cornerRadius":  14,
+                                              "padding":  [
+                                                              6,
+                                                              14
+                                                          ],
+                                              "alignItems":  "center",
+                                              "children":  [
+                                                               {
+                                                                   "type":  "text",
+                                                                   "id":  "Z1TQhB",
+                                                                   "name":  "Label",
+                                                                   "fill":  "$text-secondary",
+                                                                   "content":  "收藏",
+                                                                   "fontFamily":  "$font-body",
+                                                                   "fontSize":  12
+                                                               }
+                                                           ]
+                                          },
+                                          {
+                                              "type":  "frame",
+                                              "id":  "KdCbb",
+                                              "name":  "Filter 知识库",
+                                              "fill":  "$surface-2",
+                                              "cornerRadius":  14,
+                                              "padding":  [
+                                                              6,
+                                                              14
+                                                          ],
+                                              "alignItems":  "center",
+                                              "children":  [
+                                                               {
+                                                                   "type":  "text",
+                                                                   "id":  "voj3F",
+                                                                   "name":  "Label",
+                                                                   "fill":  "$text-secondary",
+                                                                   "content":  "知识库",
+                                                                   "fontFamily":  "$font-body",
+                                                                   "fontSize":  12
+                                                               }
+                                                           ]
+                                          }
+                                      ]
+                     },
+                     {
+                         "type":  "frame",
+                         "id":  "aos4M",
+                         "name":  "Chat List",
+                         "width":  "fill_container",
+                         "layout":  "vertical",
+                         "gap":  2,
+                         "padding":  [
+                                         4,
+                                         12,
+                                         12,
+                                         12
+                                     ],
+                         "children":  [
+                                          {
+                                              "type":  "frame",
+                                              "id":  "ppLAk",
+                                              "name":  "Pinned Section",
+                                              "width":  "fill_container",
+                                              "layout":  "vertical",
+                                              "gap":  6,
+                                              "padding":  [
+                                                              0,
+                                                              8,
+                                                              8,
+                                                              8
+                                                          ],
+                                              "children":  [
+                                                               {
+                                                                   "type":  "text",
+                                                                   "id":  "akFcK",
+                                                                   "name":  "Section Title",
+                                                                   "fill":  "$text-tertiary",
+                                                                   "content":  "📌 置顶",
+                                                                   "fontFamily":  "$font-body",
+                                                                   "fontSize":  11,
+                                                                   "fontWeight":  "600"
+                                                               },
+                                                               {
+                                                                   "type":  "frame",
+                                                                   "id":  "chRgr",
+                                                                   "name":  "Pinned Chat",
+                                                                   "width":  "fill_container",
+                                                                   "fill":  "$primary-soft",
+                                                                   "cornerRadius":  14,
+                                                                   "stroke":  "$primary",
+                                                                   "strokeWidth":  1,
+                                                                   "gap":  12,
+                                                                   "padding":  12,
+                                                                   "alignItems":  "center",
+                                                                   "children":  [
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "qsaLQ",
+                                                                                        "name":  "Icon Box",
+                                                                                        "width":  40,
+                                                                                        "height":  40,
+                                                                                        "fill":  "$primary",
+                                                                                        "cornerRadius":  12,
+                                                                                        "justifyContent":  "center",
+                                                                                        "alignItems":  "center",
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "icon",
+                                                                                                             "id":  "KsCj4",
+                                                                                                             "name":  "Icon",
+                                                                                                             "width":  18,
+                                                                                                             "height":  18,
+                                                                                                             "icon":  "plus",
+                                                                                                             "library":  "lucide",
+                                                                                                             "fill":  "$surface"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    },
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "U3X2ct",
+                                                                                        "name":  "Pinned Text",
+                                                                                        "width":  "fill_container",
+                                                                                        "layout":  "vertical",
+                                                                                        "gap":  2,
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "Cc467",
+                                                                                                             "name":  "Title",
+                                                                                                             "fill":  "$primary",
+                                                                                                             "content":  "开始新对话",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  14,
+                                                                                                             "fontWeight":  "600"
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "uoqSu",
+                                                                                                             "name":  "Sub",
+                                                                                                             "fill":  "$text-secondary",
+                                                                                                             "content":  "与 AI 开始一次全新的对话",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  11,
+                                                                                                             "fontWeight":  "normal"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    }
+                                                                                ]
+                                                               }
+                                                           ]
+                                          },
+                                          {
+                                              "type":  "frame",
+                                              "id":  "VKppp",
+                                              "name":  "Recent Section",
+                                              "width":  "fill_container",
+                                              "layout":  "vertical",
+                                              "gap":  2,
+                                              "padding":  [
+                                                              8,
+                                                              8,
+                                                              0,
+                                                              8
+                                                          ],
+                                              "children":  [
+                                                               {
+                                                                   "type":  "text",
+                                                                   "id":  "BRk9P",
+                                                                   "name":  "Section Title",
+                                                                   "fill":  "$text-tertiary",
+                                                                   "content":  "最近对话",
+                                                                   "fontFamily":  "$font-body",
+                                                                   "fontSize":  11,
+                                                                   "fontWeight":  "600"
+                                                               },
+                                                               {
+                                                                   "type":  "frame",
+                                                                   "id":  "u9Lqry",
+                                                                   "name":  "Chat Python 装饰器详解",
+                                                                   "width":  "fill_container",
+                                                                   "fill":  "$surface",
+                                                                   "gap":  12,
+                                                                   "padding":  12,
+                                                                   "alignItems":  "center",
+                                                                   "children":  [
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "nZNMY",
+                                                                                        "name":  "Icon Box",
+                                                                                        "width":  40,
+                                                                                        "height":  40,
+                                                                                        "fill":  "$primary-soft",
+                                                                                        "cornerRadius":  12,
+                                                                                        "justifyContent":  "center",
+                                                                                        "alignItems":  "center",
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "icon",
+                                                                                                             "id":  "v5sWN",
+                                                                                                             "name":  "Icon",
+                                                                                                             "width":  20,
+                                                                                                             "height":  20,
+                                                                                                             "icon":  "code",
+                                                                                                             "library":  "lucide",
+                                                                                                             "fill":  "$primary"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    },
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "x0voE",
+                                                                                        "name":  "Text Block",
+                                                                                        "width":  "fill_container",
+                                                                                        "layout":  "vertical",
+                                                                                        "gap":  3,
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "ztc3T",
+                                                                                                             "name":  "Title",
+                                                                                                             "fill":  "$text-primary",
+                                                                                                             "content":  "Python 装饰器详解",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  14,
+                                                                                                             "fontWeight":  "600"
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "aAsIr",
+                                                                                                             "name":  "Preview",
+                                                                                                             "fill":  "$text-secondary",
+                                                                                                             "content":  "@decorator 是 Python 中一种强大的语法...",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  12,
+                                                                                                             "fontWeight":  "normal"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    },
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "hq4lM",
+                                                                                        "name":  "Right",
+                                                                                        "layout":  "vertical",
+                                                                                        "gap":  4,
+                                                                                        "alignItems":  "end",
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "AncYb",
+                                                                                                             "name":  "Time",
+                                                                                                             "fill":  "$text-tertiary",
+                                                                                                             "content":  "刚刚",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  11,
+                                                                                                             "fontWeight":  "normal"
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "type":  "frame",
+                                                                                                             "id":  "W7MZx",
+                                                                                                             "name":  "Badge",
+                                                                                                             "fill":  "$warning",
+                                                                                                             "cornerRadius":  8,
+                                                                                                             "padding":  "1 6",
+                                                                                                             "alignItems":  "center",
+                                                                                                             "children":  ""
+                                                                                                         }
+                                                                                                     ]
+                                                                                    }
+                                                                                ]
+                                                               },
+                                                               {
+                                                                   "type":  "frame",
+                                                                   "id":  "zlJfl",
+                                                                   "name":  "Chat 产品需求文档撰写",
+                                                                   "width":  "fill_container",
+                                                                   "fill":  "$surface",
+                                                                   "gap":  12,
+                                                                   "padding":  12,
+                                                                   "alignItems":  "center",
+                                                                   "children":  [
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "VwL3v",
+                                                                                        "name":  "Icon Box",
+                                                                                        "width":  40,
+                                                                                        "height":  40,
+                                                                                        "fill":  "#F0EDFF",
+                                                                                        "cornerRadius":  12,
+                                                                                        "justifyContent":  "center",
+                                                                                        "alignItems":  "center",
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "icon",
+                                                                                                             "id":  "wFLKz",
+                                                                                                             "name":  "Icon",
+                                                                                                             "width":  20,
+                                                                                                             "height":  20,
+                                                                                                             "icon":  "file-text",
+                                                                                                             "library":  "lucide",
+                                                                                                             "fill":  "#7B61FF"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    },
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "MzPw7",
+                                                                                        "name":  "Text Block",
+                                                                                        "width":  "fill_container",
+                                                                                        "layout":  "vertical",
+                                                                                        "gap":  3,
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "U1Lxi",
+                                                                                                             "name":  "Title",
+                                                                                                             "fill":  "$text-primary",
+                                                                                                             "content":  "产品需求文档撰写",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  14,
+                                                                                                             "fontWeight":  "600"
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "YdH0z",
+                                                                                                             "name":  "Preview",
+                                                                                                             "fill":  "$text-secondary",
+                                                                                                             "content":  "帮我梳理一下智能客服的 PRD 框架...",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  12,
+                                                                                                             "fontWeight":  "normal"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    },
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "Bjc4B",
+                                                                                        "name":  "Right",
+                                                                                        "layout":  "vertical",
+                                                                                        "gap":  4,
+                                                                                        "alignItems":  "end",
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "KG0Al",
+                                                                                                             "name":  "Time",
+                                                                                                             "fill":  "$text-tertiary",
+                                                                                                             "content":  "今天",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  11,
+                                                                                                             "fontWeight":  "normal"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    }
+                                                                                ]
+                                                               },
+                                                               {
+                                                                   "type":  "frame",
+                                                                   "id":  "VxMOt",
+                                                                   "name":  "Chat 周末旅行计划",
+                                                                   "width":  "fill_container",
+                                                                   "fill":  "$surface",
+                                                                   "gap":  12,
+                                                                   "padding":  12,
+                                                                   "alignItems":  "center",
+                                                                   "children":  [
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "I7w10N",
+                                                                                        "name":  "Icon Box",
+                                                                                        "width":  40,
+                                                                                        "height":  40,
+                                                                                        "fill":  "#FFEDF1",
+                                                                                        "cornerRadius":  12,
+                                                                                        "justifyContent":  "center",
+                                                                                        "alignItems":  "center",
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "icon",
+                                                                                                             "id":  "XmY3F",
+                                                                                                             "name":  "Icon",
+                                                                                                             "width":  20,
+                                                                                                             "height":  20,
+                                                                                                             "icon":  "map-pin",
+                                                                                                             "library":  "lucide",
+                                                                                                             "fill":  "#FF6B9D"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    },
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "eZSoj",
+                                                                                        "name":  "Text Block",
+                                                                                        "width":  "fill_container",
+                                                                                        "layout":  "vertical",
+                                                                                        "gap":  3,
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "ZxNX7",
+                                                                                                             "name":  "Title",
+                                                                                                             "fill":  "$text-primary",
+                                                                                                             "content":  "周末旅行计划",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  14,
+                                                                                                             "fontWeight":  "600"
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "pVgDB",
+                                                                                                             "name":  "Preview",
+                                                                                                             "fill":  "$text-secondary",
+                                                                                                             "content":  "推荐一些适合三天两夜的国内目的地...",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  12,
+                                                                                                             "fontWeight":  "normal"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    },
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "u2NaH",
+                                                                                        "name":  "Right",
+                                                                                        "layout":  "vertical",
+                                                                                        "gap":  4,
+                                                                                        "alignItems":  "end",
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "EOb9d",
+                                                                                                             "name":  "Time",
+                                                                                                             "fill":  "$text-tertiary",
+                                                                                                             "content":  "昨天",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  11,
+                                                                                                             "fontWeight":  "normal"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    }
+                                                                                ]
+                                                               },
+                                                               {
+                                                                   "type":  "frame",
+                                                                   "id":  "Xsa40",
+                                                                   "name":  "Chat 论文摘要翻译",
+                                                                   "width":  "fill_container",
+                                                                   "fill":  "$surface",
+                                                                   "gap":  12,
+                                                                   "padding":  12,
+                                                                   "alignItems":  "center",
+                                                                   "children":  [
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "bkLeK",
+                                                                                        "name":  "Icon Box",
+                                                                                        "width":  40,
+                                                                                        "height":  40,
+                                                                                        "fill":  "#FFF4E5",
+                                                                                        "cornerRadius":  12,
+                                                                                        "justifyContent":  "center",
+                                                                                        "alignItems":  "center",
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "icon",
+                                                                                                             "id":  "NLt58",
+                                                                                                             "name":  "Icon",
+                                                                                                             "width":  20,
+                                                                                                             "height":  20,
+                                                                                                             "icon":  "languages",
+                                                                                                             "library":  "lucide",
+                                                                                                             "fill":  "#FF9500"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    },
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "d3gcfL",
+                                                                                        "name":  "Text Block",
+                                                                                        "width":  "fill_container",
+                                                                                        "layout":  "vertical",
+                                                                                        "gap":  3,
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "n0c5DT",
+                                                                                                             "name":  "Title",
+                                                                                                             "fill":  "$text-primary",
+                                                                                                             "content":  "论文摘要翻译",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  14,
+                                                                                                             "fontWeight":  "600"
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "xlAKH",
+                                                                                                             "name":  "Preview",
+                                                                                                             "fill":  "$text-secondary",
+                                                                                                             "content":  "Translate this abstract to English...",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  12,
+                                                                                                             "fontWeight":  "normal"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    },
+                                                                                    {
+                                                                                        "type":  "frame",
+                                                                                        "id":  "gbcpv",
+                                                                                        "name":  "Right",
+                                                                                        "layout":  "vertical",
+                                                                                        "gap":  4,
+                                                                                        "alignItems":  "end",
+                                                                                        "children":  [
+                                                                                                         {
+                                                                                                             "type":  "text",
+                                                                                                             "id":  "Qr55X",
+                                                                                                             "name":  "Time",
+                                                                                                             "fill":  "$text-tertiary",
+                                                                                                             "content":  "周一",
+                                                                                                             "fontFamily":  "$font-body",
+                                                                                                             "fontSize":  11,
+                                                                                                             "fontWeight":  "normal"
+                                                                                                         }
+                                                                                                     ]
+                                                                                    }
+                                                                                ]
+                                                               }
+                                                           ]
+                                          }
+                                      ]
+                     }
+                 ]
+}

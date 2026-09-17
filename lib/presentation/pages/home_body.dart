@@ -139,7 +139,6 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
       sessionCtrl.autoNameSession(target.id, text);
     }
 
-    chatCtrl.clearContext();
     chatCtrl.sendMessage(text);
   }
 
@@ -502,19 +501,28 @@ class _MessageList extends ConsumerWidget {
         curve: Curves.easeOut,
       );
     });
+
+    // 将 role=tool 的消息分组到前一个 assistant 消息
+    final displayItems = _groupMessages(messages);
+
     return ListView.builder(
       controller: scroller,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      itemCount: messages.length,
+      itemCount: displayItems.length,
       itemBuilder: (context, i) {
-        final msg = messages[i];
+        final item = displayItems[i];
+        final msg = item.msg;
         final isUser = msg.role == MessageRole.user;
         return ChatBubble(
           role: isUser ? ChatBubbleRole.user : ChatBubbleRole.assistant,
           content: msg.content,
           reasoning: msg.reasoning,
           toolCalls: msg.toolCalls,
-          isStreaming: i == messages.length - 1 && streaming && !isUser,
+          toolResults: item.toolResults,
+          isStreaming: i == displayItems.length - 1 &&
+              streaming &&
+              !isUser &&
+              !item.isToolGroup,
           onWikiRefTap: (ref) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('打开 Wiki: $ref')),
@@ -525,6 +533,68 @@ class _MessageList extends ConsumerWidget {
       },
     );
   }
+
+  /// 将 tool 消息分组到其对应的 assistant 消息。
+  ///
+  /// 返回的消息列表中：
+  /// - assistant 消息的 `toolResults` 会携带后续的 tool 消息
+  /// - 独立的 tool 消息（无前导 assistant toolCalls）会被过滤掉
+  /// - 空 content 的 assistant 消息（工具循环中转）会被跳过
+  static List<_MessageDisplayItem> _groupMessages(List<Message> messages) {
+    final items = <_MessageDisplayItem>[];
+    var i = 0;
+    while (i < messages.length) {
+      final msg = messages[i];
+      if (msg.role == MessageRole.tool) {
+        // 跳过无归属的 tool 消息
+        i++;
+        continue;
+      }
+      if (msg.role == MessageRole.assistant && msg.toolCalls.isNotEmpty) {
+        // 收集后续 tool 消息
+        final toolResults = <Message>[];
+        var j = i + 1;
+        while (j < messages.length && messages[j].role == MessageRole.tool) {
+          toolResults.add(messages[j]);
+          j++;
+        }
+        // 跳过工具循环中的空 assistant 消息（tool 后面的空回复）
+        if (j < messages.length &&
+            messages[j].role == MessageRole.assistant &&
+            messages[j].content.trim().isEmpty &&
+            j + 1 < messages.length &&
+            messages[j + 1].role == MessageRole.tool) {
+          j++; // 跳过空 assistant
+        }
+        items.add(_MessageDisplayItem(
+          msg: msg,
+          toolResults: toolResults,
+          isToolGroup: true,
+        ));
+        i = j;
+      } else if (msg.role == MessageRole.assistant &&
+          msg.content.trim().isEmpty &&
+          !msg.streaming) {
+        // 跳过无内容的 assistant 消息
+        i++;
+      } else {
+        items.add(_MessageDisplayItem(msg: msg));
+        i++;
+      }
+    }
+    return items;
+  }
+}
+
+class _MessageDisplayItem {
+  const _MessageDisplayItem({
+    required this.msg,
+    this.toolResults = const [],
+    this.isToolGroup = false,
+  });
+  final Message msg;
+  final List<Message> toolResults;
+  final bool isToolGroup;
 }
 
 void _showMsgMenu(BuildContext context, Message msg, bool isUser) {

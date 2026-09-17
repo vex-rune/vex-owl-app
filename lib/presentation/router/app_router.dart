@@ -217,7 +217,7 @@ class _SessionRow extends ConsumerWidget {
     return InkWell(
       onTap: () {
         ref.read(sessionControllerProvider).switchSession(session.id);
-        ref.read(chatControllerProvider).clearContext();
+        // 不调用 clearContext() — switchSession 已触发 _loadMessages 加载历史消息
         Navigator.of(context).pop();
       },
       child: Container(

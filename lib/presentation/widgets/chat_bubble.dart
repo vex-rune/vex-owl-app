@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../../core/model/llm_tool_call.dart';
+import '../../core/model/message.dart';
 import '../../design_system/design_system.dart';
 
 /// 对话消息气泡
@@ -23,6 +24,7 @@ class ChatBubble extends StatefulWidget {
     this.onLongPress,
     this.reasoning,
     this.toolCalls = const [],
+    this.toolResults = const [],
   });
 
   final ChatBubbleRole role;
@@ -38,6 +40,9 @@ class ChatBubble extends StatefulWidget {
   /// 本轮 assistant 请求的工具调用列表（仅 assistant 角色有意义）
   final List<LlmToolCall> toolCalls;
 
+  /// 工具调用返回结果消息（role=tool），按 toolCallId 归属到本 assistant 消息
+  final List<Message> toolResults;
+
   @override
   State<ChatBubble> createState() => _ChatBubbleState();
 }
@@ -45,6 +50,7 @@ class ChatBubble extends StatefulWidget {
 class _ChatBubbleState extends State<ChatBubble> {
   bool _reasoningExpanded = false;
   bool _toolCallsExpanded = false;
+  bool _toolResultsExpanded = false;
 
   bool get _isUser => widget.role == ChatBubbleRole.user;
 
@@ -77,8 +83,11 @@ class _ChatBubbleState extends State<ChatBubble> {
                   ],
                   if (!_isUser && widget.toolCalls.isNotEmpty) ...[
                     _buildToolCallsBlock(c),
-                    if (widget.content.isNotEmpty)
-                      const SizedBox(height: AppSpacing.xs),
+                    const SizedBox(height: AppSpacing.xs),
+                  ],
+                  if (!_isUser && widget.toolResults.isNotEmpty) ...[
+                    _buildToolResultsBlock(c),
+                    const SizedBox(height: AppSpacing.xs),
                   ],
                   if (widget.content.isNotEmpty) _buildBubble(c),
                   if (widget.wikiRefs != null && widget.wikiRefs!.isNotEmpty) ...[
@@ -337,6 +346,110 @@ class _ChatBubbleState extends State<ChatBubble> {
 
   /// 尝试将 JSON 字符串格式化缩进；失败时原样返回。
   String _prettyJson(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      return const JsonEncoder.withIndent('  ').convert(decoded);
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  /// 折叠展示「工具调用结果」
+  Widget _buildToolResultsBlock(AppSemanticColors c) {
+    final results = widget.toolResults;
+    final count = results.length;
+
+    return InkWell(
+      onTap: () =>
+          setState(() => _toolResultsExpanded = !_toolResultsExpanded),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 320),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 8,
+        ),
+        decoration: BoxDecoration(
+          color: c.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: c.border, width: 0.5),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.output_outlined,
+                    size: 12, color: c.success),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '工具返回 · $count 个结果',
+                    style: TextStyle(fontSize: 12, color: c.textTertiary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Icon(
+                  _toolResultsExpanded
+                      ? Icons.expand_less
+                      : Icons.expand_more,
+                  size: 14,
+                  color: c.textTertiary,
+                ),
+              ],
+            ),
+            if (_toolResultsExpanded)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < results.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 6),
+                      Text(
+                        results[i].toolName ?? 'tool',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: c.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (results[i].content.trim().isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Container(
+                          width: double.infinity,
+                          constraints: const BoxConstraints(maxHeight: 200),
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: c.surface,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: SingleChildScrollView(
+                            child: SelectableText(
+                              _tryPrettyJson(results[i].content),
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 11,
+                                color: c.textSecondary,
+                                height: 1.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 尝试格式化 JSON；失败时原样返回
+  String _tryPrettyJson(String raw) {
     try {
       final decoded = jsonDecode(raw);
       return const JsonEncoder.withIndent('  ').convert(decoded);

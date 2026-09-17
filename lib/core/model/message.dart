@@ -263,6 +263,15 @@ class Message {
       'createdAt': createdAt.toIso8601String(),
       if (toolCallId != null) 'toolCallId': toolCallId,
       if (toolName != null) 'toolName': toolName,
+      if (reasoning.isNotEmpty) 'reasoning': reasoning,
+      if (toolCalls.isNotEmpty)
+        'toolCalls': toolCalls
+            .map((tc) => {
+                  'id': tc.id,
+                  'name': tc.name,
+                  'arguments': tc.arguments,
+                })
+            .toList(),
     };
   }
 
@@ -292,6 +301,15 @@ class Message {
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
       toolCallId: json['toolCallId'] as String?,
       toolName: json['toolName'] as String?,
+      reasoning: json['reasoning'] as String? ?? '',
+      toolCalls: (json['toolCalls'] as List<dynamic>?)
+              ?.map((tc) => LlmToolCall(
+                    id: tc['id'] as String? ?? '',
+                    name: tc['name'] as String? ?? '',
+                    arguments: tc['arguments'] as String? ?? '',
+                  ))
+              .toList() ??
+          const [],
     );
   }
 

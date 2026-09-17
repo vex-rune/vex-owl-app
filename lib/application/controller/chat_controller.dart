@@ -196,7 +196,12 @@ class ChatController extends ChangeNotifier {
       return;
     }
 
-    // 1. Token 阈值告警（非阻塞）
+    // 1. 清理可能残留的流式占位消息（上次调用被中断时）
+    if (_messages.isNotEmpty && _messages.last.streaming) {
+      _messages = _messages.sublist(0, _messages.length - 1);
+    }
+
+    // 2. Token 阈值告警（非阻塞）
     final tokens = TokenCounter.estimateTokens(content);
     if (tokens > _settingsCtrl.chatTokenThreshold) {
       TalkerService.instance.chatInfo('⚠️ Token 超阈值 $tokens > ${_settingsCtrl.chatTokenThreshold}');
@@ -205,7 +210,7 @@ class ChatController extends ChangeNotifier {
     }
     _inputTokenEstimate = tokens;
 
-    // 2. 添加用户消息
+    // 3. 添加用户消息
     _currentSessionId = session.id;
     final userMessage = Message.user(
       sessionId: session.id,

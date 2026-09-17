@@ -48,6 +48,16 @@ class _WikiBodyState extends ConsumerState<WikiBody> {
   String _fileKindFilter = 'all';
 
   @override
+  void initState() {
+    super.initState();
+    // 每次进入知识库页面，立即从文件系统刷新最新数据
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(wikiControllerProvider).refresh();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final controller = ref.watch(wikiControllerProvider);
     final c = AppSemanticColors.of(context);
@@ -105,33 +115,67 @@ class _WikiBodyState extends ConsumerState<WikiBody> {
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.pageHorizontal,
       ),
-      child: TextField(
-        onChanged: (v) => setState(() => _searchQuery = v),
-        style: AppTypography.bodyMedium.copyWith(color: c.textPrimary),
-        decoration: InputDecoration(
-          hintText: '搜索 Wiki 页面 / 待办...',
-          hintStyle:
-              AppTypography.bodySmall.copyWith(color: c.textDisabled),
-          prefixIcon: Icon(Icons.search, size: 20, color: c.textTertiary),
-          suffixIcon: _searchQuery.isNotEmpty
-              ? IconButton(
-                  icon: const Icon(Icons.clear, size: 18),
-                  color: c.textTertiary,
-                  onPressed: () => setState(() => _searchQuery = ''),
-                )
-              : null,
-          filled: true,
-          fillColor: c.surfaceVariant,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              onChanged: (v) => setState(() => _searchQuery = v),
+              style: AppTypography.bodyMedium.copyWith(color: c.textPrimary),
+              decoration: InputDecoration(
+                hintText: '搜索 Wiki 页面 / 待办...',
+                hintStyle:
+                    AppTypography.bodySmall.copyWith(color: c.textDisabled),
+                prefixIcon: Icon(Icons.search, size: 20, color: c.textTertiary),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        color: c.textTertiary,
+                        onPressed: () => setState(() => _searchQuery = ''),
+                      )
+                    : null,
+                filled: true,
+                fillColor: c.surfaceVariant,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                isDense: true,
+              ),
+            ),
           ),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 10,
+          const SizedBox(width: 8),
+          // 刷新按钮：重新扫描文件系统
+          IconButton(
+            onPressed: () async {
+              final controller = ref.read(wikiControllerProvider);
+              await controller.refresh();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: const Text('已刷新知识库'),
+                    duration: const Duration(seconds: 1),
+                    backgroundColor: c.success,
+                  ),
+                );
+              }
+            },
+            icon: Icon(Icons.refresh, size: 22, color: c.textSecondary),
+            tooltip: '刷新',
+            style: IconButton.styleFrom(
+              backgroundColor: c.surfaceVariant,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: c.border, width: 0.5),
+              ),
+              padding: const EdgeInsets.all(10),
+              minimumSize: Size.zero,
+            ),
           ),
-          isDense: true,
-        ),
+        ],
       ),
     );
   }
@@ -1091,7 +1135,6 @@ class _WikiBodyState extends ConsumerState<WikiBody> {
               final fileName =
                   name.endsWith('.md') ? name : '$name.md';
               await controller.writePage(fileName, '# $fileName\n\n');
-              await controller.refreshMetaOf(fileName);
               if (mounted) setState(() {});
               if (context.mounted) Navigator.pop(ctx);
             },
@@ -1197,9 +1240,6 @@ class _WikiBodyState extends ConsumerState<WikiBody> {
                   description: descCtrl.text.trim(),
                   priority: priority,
                 );
-                if (created != null) {
-                  await controller.refreshMetaOf(created);
-                }
                 if (mounted) setState(() {});
                 if (created != null && ctx.mounted) Navigator.pop(ctx);
               },

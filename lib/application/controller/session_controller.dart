@@ -182,6 +182,13 @@ class SessionController extends ChangeNotifier {
   Future<void> updateSessionContext(String id, String context) async {
     try {
       await _repo.updateContext(id, context);
+      _sessions = _repo.listAll();
+      // 同步更新 currentSession 引用
+      if (_currentSession?.id == id) {
+        final updated = _repo.getById(id);
+        if (updated != null) _currentSession = updated;
+      }
+      notifyListeners();
     } catch (e) {
       debugPrint('更新会话上下文失败：$e');
     }

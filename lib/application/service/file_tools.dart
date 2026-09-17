@@ -87,7 +87,7 @@ class FileTools {
       }
     }
 
-    // 拼绝对路径
+    // 拼绝对路径（root 已是 .owl/wiki/，normalized 含 wiki/ 前缀需去掉）
     final root = await _ensureRootPath();
     if (root == null || root.isEmpty) {
       throw FileToolException(
@@ -95,7 +95,7 @@ class FileTools {
         code: 'no_root',
       );
     }
-    final absolute = p.normalize(p.join(root, normalized));
+    final absolute = p.normalize(p.join(root, relative));
     return File(absolute);
   }
 

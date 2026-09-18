@@ -5,7 +5,7 @@
 /// - 会话存储（file_session_repository）
 /// - 文件存储（session_storage、config_storage、atomic_file_writer、owl_root）
 /// - 数据迁移（v1_session_migration、v2_config_migration）
-/// - Agent 定义（chat_agent_spec、image_agent_spec）
+/// - Agent 定义（chat_agent_spec、image_agent_spec、wiki_agent_spec）
 /// - LLM Provider 抽象与注册表（llm、provider_registry）
 export 'repository/i_wiki_repository.dart';
 export 'repository/wiki_repository.dart';
@@ -20,4 +20,5 @@ export 'storage/migration/v2_config_migration.dart';
 export 'agents/agent_spec.dart';
 export 'agents/chat_agent_spec.dart';
 export 'agents/image_agent_spec.dart';
+export 'agents/wiki_agent_spec.dart';
 export 'llm/llm.dart';

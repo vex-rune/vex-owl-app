@@ -42,8 +42,15 @@ class FileTools {
 
   // ───────────────────────── 路径校验 ─────────────────────────
 
-  /// 把用户输入的相对路径（wiki/{profile,todos,concepts,...}/*.md）
-  /// 解析为绝对路径，并校验白名单。
+  /// 把用户输入的相对路径解析为绝对路径
+  ///
+  /// 支持整个 .owl 目录的操作：
+  /// - wiki/ - Wiki 知识库页面
+  /// - raw/ - 原始文件
+  /// - sessions/ - 会话数据
+  /// - config/ - 配置数据
+  ///
+  /// 不做任何限制，仅保留黑名单保护（API Key、敏感配置）
   Future<File> _resolveAllowedPath(String input, FileOp op) async {
     if (input.isEmpty) {
       throw FileToolException('路径不能为空', code: 'empty_path');
@@ -55,39 +62,16 @@ class FileTools {
       throw FileToolException('不允许使用绝对路径', code: 'absolute_path');
     }
 
-    // 统一前缀 wiki/
+    // 标准化路径
     String normalized = input.trim().replaceAll(RegExp(r'\\'), '/');
-    if (!normalized.startsWith('wiki/') && normalized != 'wiki') {
-      throw FileToolException('路径必须以 `wiki/` 开头', code: 'outside_wiki');
-    }
-    final relative = normalized.substring('wiki/'.length);
 
-    // 检查黑名单（敏感文件）
-    final blacklisted = _alwaysBlacklisted(relative);
+    // 检查黑名单（敏感文件：API Key、应用配置等）
+    final blacklisted = _alwaysBlacklisted(normalized);
     if (blacklisted) {
       throw FileToolException('不允许操作此文件', code: 'blacklisted');
     }
 
-    // 检查写操作白名单（profile / todos / concepts）
-    if (op == FileOp.write || op == FileOp.append || op == FileOp.edit) {
-      if (!_writable(relative)) {
-        throw FileToolException(
-          '此路径不允许写入（仅允许 wiki/profile.md、wiki/todos/todo-{uuid}.md 与 wiki/concepts/*.md）',
-          code: 'not_writable',
-        );
-      }
-    }
-    // 读操作白名单：wiki 下所有非黑名单 .md
-    if (op == FileOp.read || op == FileOp.list) {
-      if (!_readable(relative)) {
-        throw FileToolException(
-          '此路径不允许读取',
-          code: 'not_readable',
-        );
-      }
-    }
-
-    // 拼绝对路径（root 已是 .owl/wiki/，normalized 含 wiki/ 前缀需去掉）
+    // 拼绝对路径（基于 .owl 根目录）
     final root = await _ensureRootPath();
     if (root == null || root.isEmpty) {
       throw FileToolException(
@@ -95,7 +79,21 @@ class FileTools {
         code: 'no_root',
       );
     }
-    final absolute = p.normalize(p.join(root, relative));
+
+    // 如果路径已包含子目录前缀（wiki/、raw/ 等），直接使用
+    // 否则默认添加到 wiki/
+    String absolute;
+    if (normalized.startsWith('wiki/') ||
+        normalized.startsWith('raw/') ||
+        normalized.startsWith('sessions/') ||
+        normalized.startsWith('config/') ||
+        normalized.startsWith('agents/')) {
+      absolute = p.normalize(p.join(root, normalized));
+    } else {
+      // 默认添加到 wiki/
+      absolute = p.normalize(p.join(root, 'wiki', normalized));
+    }
+
     return File(absolute);
   }
 
@@ -118,49 +116,26 @@ class FileTools {
     _rootPath = path;
   }
 
-  // ───────────────────────── 路径白名单 ─────────────────────────
+  // ───────────────────────── 路径黑名单 ─────────────────────────
 
-  /// 读写全黑名单（绝对敏感：API Key / 应用设置 / 会话历史 / 私有目录）
+  /// 读写全黑名单（绝对敏感：API Key / 应用设置 / 私有目录）
   /// 这些文件 LLM 既不能读也不能写
   bool _alwaysBlacklisted(String relative) {
-    return relative == 'context-settings.md' ||
-        relative == 'api-configs.md' ||
-        relative.startsWith('sessions/') ||
-        relative.startsWith('sessions\\') ||
-        relative.startsWith('.archive') ||
-        relative.startsWith('.meta') ||
-        relative.startsWith('.backup');
-  }
+    // 清理路径
+    String clean = relative.replaceAll(RegExp(r'^/+'), '');
 
-  /// 写入黑名单（在读黑名单基础上额外禁止覆盖 index/schema）
-/// index/schema 是知识库骨架。
-/// profile.md 允许写入（AI 根据对话维护用户画像）。
-/// todos/todo-{uuid}.md / concepts/*.md 允许写入。
-bool _writeBlacklisted(String relative) {
-  if (_alwaysBlacklisted(relative)) return true;
-  return relative == 'index.md' || relative == 'schema.md';
-}
+    // 检查 .owl 下的敏感文件
+    if (clean == 'config/api-configs.jsonl') return true;
+    if (clean == 'config/settings.jsonl') return true;
+    if (clean == '.archive') return true;
+    if (clean.startsWith('.archive/')) return true;
+    if (clean == '.meta') return true;
+    if (clean.startsWith('.meta/')) return true;
+    if (clean == '.backup') return true;
+    if (clean.startsWith('.backup/')) return true;
+    if (clean == '.lock') return true;
 
-/// 读操作白名单：除绝对黑名单外的所有 wiki/* 子路径
-/// （profile.md / index.md / schema.md / todos/* / concepts/* 均可读）
-bool _readable(String relative) {
-  if (relative.isEmpty) return true; // list_files("wiki")
-  return !_alwaysBlacklisted(relative);
-}
-
-/// 写操作白名单（v5）：
-/// - profile.md（用户画像）
-/// - todos/todo-{uuid}.md（多文件待办）
-/// - concepts/*.md（长期知识）
-bool _writable(String relative) {
-  if (_writeBlacklisted(relative)) return false;
-  if (relative == 'profile.md') return true;
-  if (relative.startsWith('todos/') &&
-      RegExp(r'^todos/todo-[a-f0-9-]+\.md$').hasMatch(relative)) {
-    return true;
-  }
-  if (relative.startsWith('concepts/') && relative.endsWith('.md')) return true;
-  return false;
+    return false;
   }
 
   // ───────────────────────── 工具实现 ─────────────────────────
@@ -267,29 +242,53 @@ bool _writable(String relative) {
     return '已替换 1 处（${search.length} → ${replace.length} 字节）';
   }
 
-  /// list_files：列出 wiki 下某子目录的 .md 文件
+  /// list_files：列出 .owl 目录下指定子目录的文件
+  ///
+  /// 支持列出 wiki/、raw/、sessions/、config/ 等子目录
   Future<String> listFiles(String dir) async {
     final normalized = dir.trim().replaceAll(RegExp(r'\\'), '/');
 
-    // 仍要校验是否在白名单子目录内
-    final rel = normalized.startsWith('wiki/')
-        ? normalized.substring('wiki/'.length)
-        : normalized;
-    if (!_readable(rel) && rel.isNotEmpty) {
-      throw FileToolException('不允许列出此目录', code: 'not_readable');
+    // 标准化路径：添加子目录前缀或默认到 wiki/
+    String searchPath;
+    if (normalized.isEmpty || normalized == '/') {
+      searchPath = '';
+    } else if (normalized.startsWith('wiki/') ||
+               normalized.startsWith('raw/') ||
+               normalized.startsWith('sessions/') ||
+               normalized.startsWith('config/')) {
+      searchPath = normalized;
+    } else {
+      searchPath = 'wiki/$normalized';
     }
 
     final root = await _ensureRootPath();
     if (root == null || root.isEmpty) {
       throw FileToolException('FileTools 根目录未设置', code: 'no_root');
     }
-    final absolute = p.normalize(p.join(root, normalized));
+    final absolute = p.normalize(p.join(root, searchPath));
 
     final dirFile = Directory(absolute);
     if (!await dirFile.exists()) return '[]';
+
+    // 如果是列出根目录，返回子目录列表
+    if (searchPath.isEmpty) {
+      final subDirs = <String>[];
+      await for (final entity in dirFile.list()) {
+        if (entity is Directory) {
+          final name = p.basename(entity.path);
+          if (!name.startsWith('.')) {
+            subDirs.add(name);
+          }
+        }
+      }
+      subDirs.sort();
+      return subDirs.toString();
+    }
+
+    // 否则列出目录下的文件（不递归）
     final files = await dirFile
-        .list(recursive: rel.isEmpty ? false : false)
-        .where((e) => e is File && e.path.endsWith('.md'))
+        .list(recursive: false)
+        .where((e) => e is File)
         .map((e) => p.relative(e.path, from: root))
         .toList();
     files.sort();

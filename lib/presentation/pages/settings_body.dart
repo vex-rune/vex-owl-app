@@ -44,8 +44,6 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
     return ListView(
       padding: const EdgeInsets.only(bottom: AppSpacing.xxxl),
       children: [
-        // ── 权限管理 ──
-        _buildPermissionManagementSection(),
 
         // ── API 配置（v6.2 重写） ──
         _buildApiConfigSection(context, controller),
@@ -61,6 +59,9 @@ class _SettingsBodyState extends ConsumerState<SettingsBody> {
 
         // ── 文件设置 ──
         _buildFileSettingsSection(controller),
+        
+        // ── 权限管理 ──
+        _buildPermissionManagementSection(),
 
         // ── 主题外观 ──
         _buildThemeSection(context),

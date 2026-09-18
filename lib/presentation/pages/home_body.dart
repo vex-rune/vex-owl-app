@@ -828,40 +828,41 @@ class _ComposerState extends ConsumerState<_Composer> {
           ),
           const SizedBox(height: 8),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              IconButton(
-                icon: Icon(Icons.add, size: 24, color: c.textSecondary),
-                onPressed: widget.onAttach,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
-              const SizedBox(width: 8),
               Expanded(
                 child: Container(
-                  height: 44,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  alignment: Alignment.centerLeft,
+                  constraints: const BoxConstraints(maxHeight: 130),
                   decoration: BoxDecoration(
                     color: c.surfaceVariant,
                     borderRadius: BorderRadius.circular(22),
-                    border: Border.all(color: c.border, width: 0.5),
                   ),
-                  child: TextField(
-                    controller: widget.controller,
-                    maxLines: 5,
-                    minLines: 1,
-                    textInputAction: TextInputAction.newline,
-                    style: TextStyle(fontSize: 14, color: c.textPrimary),
-                    decoration: InputDecoration(
-                      hintText: '发消息或按住说话…',
-                      hintStyle:
-                          TextStyle(fontSize: 14, color: c.textTertiary),
-                      border: InputBorder.none,
-                      isCollapsed: true,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    onSubmitted: (_) => widget.onSend(),
+                  child: LayoutBuilder(
+                    builder: (ctx, constraints) {
+                      return ConstrainedBox(
+                        constraints: constraints.copyWith(maxHeight: 130),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          child: TextField(
+                            controller: widget.controller,
+                            maxLines: null,
+                            minLines: 1,
+                            maxLength: 4000,
+                            textInputAction: TextInputAction.newline,
+                            style: TextStyle(fontSize: 14, color: c.textPrimary),
+                            decoration: InputDecoration(
+                              hintText: '发消息…',
+                              hintStyle: TextStyle(fontSize: 14, color: c.textTertiary),
+                              border: InputBorder.none,
+                              isCollapsed: true,
+                              contentPadding: EdgeInsets.zero,
+                              counterText: '',
+                            ),
+                            onSubmitted: (_) => widget.onSend(),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),

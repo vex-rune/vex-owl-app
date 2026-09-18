@@ -4,6 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/repository/i_wiki_repository.dart';
 import '../../data/repository/wiki_repository.dart';
 
+// re-export controllers for global access
+export '../controller/settings_controller.dart' show settingsControllerProvider;
+
 // re-export from permission_onboarding for global access
 // v6.4: 修复 H1，移除 presentation 层反向导出（改为直接从 presentation 导入）
 export '../../presentation/widgets/permission_onboarding.dart'

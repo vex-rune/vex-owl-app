@@ -13,6 +13,7 @@ import '../service/context_compressor.dart';
 import '../service/file_tools.dart';
 import '../service/session_file_service.dart';
 import '../service/tool_registry.dart';
+import '../service/wiki_tools.dart';
 
 import 'session_controller.dart';
 import 'settings_controller.dart';
@@ -40,7 +41,8 @@ class ChatController extends ChangeNotifier {
     // 初始化文件工具集（白名单 + 原子写入）
     final wiki = _ref.read(wikiRepositoryProvider);
     final fileTools = FileTools(wiki);
-    _toolRegistry = ToolRegistry(fileTools: fileTools);
+    final wikiTools = WikiTools('');  // 根路径后续设置
+    _toolRegistry = ToolRegistry(fileTools: fileTools, wikiTools: wikiTools);
     // 异步设置 Wiki 根路径（用于解析白名单路径）
     _initToolRootPath(fileTools, wiki);
 

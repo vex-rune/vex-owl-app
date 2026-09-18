@@ -2,6 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/controller/wiki_controller.dart';
+import '../../application/providers/app_providers.dart';
+import '../../application/service/wiki_organizer_service.dart';
+import '../../application/service/wiki_tools.dart';
+import '../../core/core.dart';
+import '../../data/data.dart';
+import '../../data/storage/owl_root.dart';
 import '../../core/model/wiki_front_matter.dart';
 import '../../design_system/design_system.dart';
 import '../widgets/widgets.dart';
@@ -47,14 +53,91 @@ class _WikiBodyState extends ConsumerState<WikiBody> {
   /// 当前文件类型过滤：'all' / 'doc' / 'img' / 'video' / 'music'
   String _fileKindFilter = 'all';
 
+  /// Wiki 整理服务
+  WikiOrganizerService? _organizerService;
+
+  /// 整理中状态
+  bool _isOrganizing = false;
+
   @override
   void initState() {
     super.initState();
     // 每次进入知识库页面，立即从文件系统刷新最新数据
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       ref.read(wikiControllerProvider).refresh();
+
+      // 初始化整理服务
+      final wiki = ref.read(wikiRepositoryProvider);
+      final root = await wiki.getRootPath();
+      if (mounted && root.isNotEmpty) {
+        _organizerService = WikiOrganizerService(
+          settingsController: ref.read(settingsControllerProvider),
+          wikiRoot: root,
+        );
+        _organizerService!.addListener(_onOrganizerChanged);
+      }
     });
+  }
+
+  void _onOrganizerChanged() {
+    if (mounted) {
+      setState(() {
+        _isOrganizing = _organizerService?.status != OrganizeTaskStatus.idle &&
+            _organizerService?.status != OrganizeTaskStatus.completed &&
+            _organizerService?.status != OrganizeTaskStatus.failed;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _organizerService?.removeListener(_onOrganizerChanged);
+    _organizerService?.dispose();
+    super.dispose();
+  }
+
+  /// 执行 Wiki 自动整理
+  Future<void> _onOrganize() async {
+    if (_organizerService == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('整理服务未初始化')),
+      );
+      return;
+    }
+
+    final controller = ref.read(wikiControllerProvider);
+
+    // 显示整理选项对话框
+    final option = await showDialog<_OrganizeOption>(
+      context: context,
+      builder: (ctx) => _OrganizeOptionDialog(rawFiles: controller.rawFiles),
+    );
+
+    if (option == null) return;
+
+    setState(() => _isOrganizing = true);
+
+    try {
+      final result = await _organizerService!.organize(
+        mode: option.mode,
+        rawFile: option.rawFile,
+      );
+      if (!mounted) return;
+
+      // 显示整理结果
+      await showDialog(
+        context: context,
+        builder: (ctx) => _OrganizeResultDialog(result: result),
+      );
+
+      // 刷新知识库
+      ref.read(wikiControllerProvider).refresh();
+    } finally {
+      if (mounted) {
+        setState(() => _isOrganizing = false);
+      }
+    }
   }
 
   @override
@@ -175,6 +258,39 @@ class _WikiBodyState extends ConsumerState<WikiBody> {
               minimumSize: Size.zero,
             ),
           ),
+          const SizedBox(width: 8),
+          // 整理按钮
+          _isOrganizing
+              ? Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: c.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: c.primary.withOpacity(0.3)),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: c.primary,
+                    ),
+                  ),
+                )
+              : IconButton(
+                  onPressed: _isOrganizing ? null : _onOrganize,
+                  icon: Icon(Icons.auto_fix_high, size: 22, color: c.primary),
+                  tooltip: '自动整理',
+                  style: IconButton.styleFrom(
+                    backgroundColor: c.primary.withOpacity(0.1),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: c.primary.withOpacity(0.3), width: 0.5),
+                    ),
+                    padding: const EdgeInsets.all(10),
+                    minimumSize: Size.zero,
+                  ),
+                ),
         ],
       ),
     );
@@ -1851,6 +1967,668 @@ class _TodoTileState extends State<_TodoTile> {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 整理结果对话框
+class _OrganizeResultDialog extends StatelessWidget {
+  const _OrganizeResultDialog({required this.result});
+
+  final OrganizeResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppSemanticColors.of(context);
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          Icon(
+            result.status == OrganizeTaskStatus.completed
+                ? Icons.check_circle
+                : Icons.error_outline,
+            color: result.status == OrganizeTaskStatus.completed
+                ? c.success
+                : c.error,
+          ),
+          const SizedBox(width: 8),
+          Text(result.status == OrganizeTaskStatus.completed
+              ? '整理完成'
+              : '整理失败'),
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (result.summary != null) ...[
+              Text(
+                result.summary!,
+                style: AppTypography.bodyMedium.copyWith(color: c.textPrimary),
+              ),
+              const SizedBox(height: 16),
+            ],
+            if (result.duration != null)
+              Text(
+                '耗时：${_formatDuration(result.duration!)}',
+                style: AppTypography.bodySmall.copyWith(color: c.textSecondary),
+              ),
+            const SizedBox(height: 12),
+            if (result.hasResults) ...[
+              Text(
+                '结果统计：',
+                style: AppTypography.bodySmall.copyWith(
+                  color: c.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: c.surfaceVariant,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  children: [
+                    _ResultStatRow(
+                      icon: Icons.check,
+                      label: '成功',
+                      count: result.successCount,
+                      color: c.success,
+                    ),
+                    const SizedBox(height: 4),
+                    _ResultStatRow(
+                      icon: Icons.close,
+                      label: '失败',
+                      count: result.failedCount,
+                      color: c.error,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 200),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: result.items.length,
+                  itemBuilder: (ctx, i) {
+                    final item = result.items[i];
+                    return ListTile(
+                      dense: true,
+                      leading: Icon(
+                        item.success ? Icons.check_circle_outline : Icons.error_outline,
+                        size: 18,
+                        color: item.success ? c.success : c.error,
+                      ),
+                      title: Text(
+                        item.description,
+                        style: AppTypography.bodySmall,
+                      ),
+                      subtitle: item.path != '-'
+                          ? Text(
+                              item.path,
+                              style: AppTypography.bodySmall.copyWith(
+                                color: c.textTertiary,
+                                fontSize: 10,
+                              ),
+                            )
+                          : null,
+                    );
+                  },
+                ),
+              ),
+            ],
+            if (result.error != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: c.error.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: c.error.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber, color: c.error, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        result.error!,
+                        style: AppTypography.bodySmall.copyWith(color: c.error),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
+
+  String _formatDuration(Duration d) {
+    if (d.inSeconds < 60) return '${d.inSeconds} 秒';
+    return '${d.inMinutes} 分 ${d.inSeconds % 60} 秒';
+  }
+}
+
+class _ResultStatRow extends StatelessWidget {
+  const _ResultStatRow({
+    required this.icon,
+    required this.label,
+    required this.count,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final int count;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 6),
+        Text(label, style: AppTypography.bodySmall),
+        const Spacer(),
+        Text(
+          count.toString(),
+          style: AppTypography.bodyMedium.copyWith(
+            fontWeight: FontWeight.w600,
+            color: color,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 整理选项
+class _OrganizeOption {
+  const _OrganizeOption({required this.mode, this.rawFile});
+
+  final String mode;
+  final String? rawFile;  // 指定要整理的原始文件
+}
+
+/// 整理选项对话框
+class _OrganizeOptionDialog extends StatefulWidget {
+  const _OrganizeOptionDialog({required this.rawFiles});
+
+  final List<String> rawFiles;
+
+  @override
+  State<_OrganizeOptionDialog> createState() => _OrganizeOptionDialogState();
+}
+
+class _OrganizeOptionDialogState extends State<_OrganizeOptionDialog> {
+  String? _selectedRawFile;
+  bool _showStoragePicker = false;
+  List<Map<String, dynamic>> _storageFiles = [];
+  bool _loadingStorage = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 预加载手机存储文件
+    _loadStorageFiles();
+  }
+
+  Future<void> _loadStorageFiles() async {
+    setState(() => _loadingStorage = true);
+    try {
+      final wikiRoot = OwlRoot.instance.wikiDir;
+      final tools = WikiTools(wikiRoot);
+      final result = await tools.listRawDirectory('/');
+      if (result.success && result.data != null) {
+        setState(() {
+          _storageFiles = List<Map<String, dynamic>>.from(result.data['files'] ?? []);
+          _loadingStorage = false;
+        });
+      }
+    } catch (e) {
+      log.error('加载手机存储文件失败', StackTrace.current);
+    }
+    setState(() => _loadingStorage = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppSemanticColors.of(context);
+
+    if (_showStoragePicker) {
+      return _buildStoragePicker(context, c);
+    }
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          Icon(Icons.auto_fix_high, color: c.primary, size: 22),
+          const SizedBox(width: 8),
+          const Text('Wiki 自动整理'),
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 模式选择
+            Text(
+              '整理模式',
+              style: AppTypography.bodySmall.copyWith(
+                color: c.textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _OptionTile(
+              icon: Icons.auto_fix_high,
+              title: '全量整理',
+              subtitle: '检查所有页面和链接完整性',
+              onTap: () => Navigator.pop(context, const _OrganizeOption(mode: 'full')),
+            ),
+            const SizedBox(height: 8),
+            _OptionTile(
+              icon: Icons.add_circle_outline,
+              title: '增量整理',
+              subtitle: '检查新增文件和链接',
+              onTap: () => Navigator.pop(context, const _OrganizeOption(mode: 'incremental')),
+            ),
+
+            // 原始文件区域
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Text(
+                  '选择原始文件',
+                  style: AppTypography.bodySmall.copyWith(
+                    color: c.textSecondary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () {
+                    setState(() => _showStoragePicker = true);
+                  },
+                  icon: Icon(Icons.folder_open, size: 16, color: c.primary),
+                  label: Text('手机存储', style: TextStyle(color: c.primary, fontSize: 12)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // Wiki 原始目录文件
+            if (widget.rawFiles.isNotEmpty) ...[
+              Container(
+                constraints: const BoxConstraints(maxHeight: 120),
+                decoration: BoxDecoration(
+                  color: c.surfaceVariant.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: c.border),
+                ),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.all(4),
+                  itemCount: widget.rawFiles.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 2),
+                  itemBuilder: (ctx, i) {
+                    final rawFile = widget.rawFiles[i];
+                    final selected = _selectedRawFile == rawFile;
+                    final fileName = rawFile.split('/').last;
+                    return _RawFileTile(
+                      fileName: fileName,
+                      rawPath: rawFile,
+                      selected: selected,
+                      onTap: () {
+                        setState(() {
+                          _selectedRawFile = selected ? null : rawFile;
+                        });
+                      },
+                    );
+                  },
+                ),
+              ),
+            ] else ...[
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: c.surfaceVariant.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: c.border),
+                ),
+                child: Column(
+                  children: [
+                    Icon(Icons.folder_off_outlined, size: 32, color: c.textTertiary),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Wiki 原始目录为空',
+                      style: AppTypography.bodySmall.copyWith(color: c.textSecondary),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '点击「手机存储」选择文件',
+                      style: AppTypography.bodySmall.copyWith(color: c.textTertiary, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            // 手机存储快捷入口
+            const SizedBox(height: 12),
+            InkWell(
+              onTap: () {
+                setState(() => _showStoragePicker = true);
+              },
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: c.primary.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: c.primary.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.smartphone, color: c.primary, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '从手机存储选择',
+                            style: AppTypography.bodySmall.copyWith(
+                              color: c.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            '浏览下载、文档等目录',
+                            style: AppTypography.bodySmall.copyWith(
+                              color: c.textSecondary,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: c.primary),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        if (_selectedRawFile != null)
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(
+              context,
+              _OrganizeOption(
+                mode: 'incremental',
+                rawFile: _selectedRawFile,
+              ),
+            ),
+            icon: const Icon(Icons.arrow_forward, size: 16),
+            label: Text('整理 ${_selectedRawFile!.split('/').last}'),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildStoragePicker(BuildContext context, AppSemanticColors c) {
+    return AlertDialog(
+      title: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.arrow_back, size: 20),
+            onPressed: () => setState(() => _showStoragePicker = false),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+          const SizedBox(width: 8),
+          const Text('选择文件'),
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: _loadingStorage
+            ? const Center(child: CircularProgressIndicator())
+            : _storageFiles.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.folder_off_outlined, size: 48, color: c.textTertiary),
+                        const SizedBox(height: 16),
+                        Text(
+                          '未找到可读文件',
+                          style: AppTypography.bodyMedium.copyWith(color: c.textSecondary),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '支持：.md .txt .pdf .doc .json .yaml 等',
+                          style: AppTypography.bodySmall.copyWith(color: c.textTertiary, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _storageFiles.length,
+                    itemBuilder: (ctx, i) {
+                      final file = _storageFiles[i];
+                      final path = file['path'] as String;
+                      final name = file['name'] as String;
+                      final ext = file['extension'] as String;
+                      final size = file['size'] as int? ?? 0;
+                      final selected = _selectedRawFile == path;
+
+                      return ListTile(
+                        leading: Icon(
+                          _iconForExtension(ext),
+                          color: selected ? c.primary : c.textSecondary,
+                        ),
+                        title: Text(
+                          name,
+                          style: AppTypography.bodySmall.copyWith(
+                            color: selected ? c.primary : c.textPrimary,
+                            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                          ),
+                        ),
+                        subtitle: Text(
+                          '${_formatSize(size)} • ${_shortenPath(path)}',
+                          style: AppTypography.bodySmall.copyWith(
+                            color: c.textTertiary,
+                            fontSize: 10,
+                          ),
+                        ),
+                        selected: selected,
+                        selectedTileColor: c.primary.withOpacity(0.1),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: selected ? BorderSide(color: c.primary) : BorderSide.none,
+                        ),
+                        onTap: () {
+                          setState(() {
+                            _selectedRawFile = selected ? null : path;
+                          });
+                        },
+                      );
+                    },
+                  ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            setState(() => _showStoragePicker = false);
+          },
+          child: const Text('返回'),
+        ),
+        if (_selectedRawFile != null)
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('选择 ${_selectedRawFile!.split('/').last}'),
+          ),
+      ],
+    );
+  }
+
+  IconData _iconForExtension(String ext) {
+    switch (ext.toLowerCase()) {
+      case '.md':
+      case '.txt':
+        return Icons.description_outlined;
+      case '.pdf':
+        return Icons.picture_as_pdf_outlined;
+      case '.json':
+      case '.yaml':
+      case '.yml':
+        return Icons.data_object;
+      case '.doc':
+      case '.docx':
+        return Icons.article_outlined;
+      default:
+        return Icons.insert_drive_file_outlined;
+    }
+  }
+
+  String _formatSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  String _shortenPath(String path) {
+    // 简化路径显示
+    if (path.contains('Download')) return '下载';
+    if (path.contains('Documents')) return '文档';
+    if (path.contains('raw')) return 'Wiki';
+    return path.split('/').take(3).join('/');
+  }
+}
+
+/// 模式选项磁贴
+class _OptionTile extends StatelessWidget {
+  const _OptionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppSemanticColors.of(context);
+    return Material(
+      color: c.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: c.border),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: c.primary, size: 22),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: AppTypography.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+                    Text(subtitle, style: AppTypography.bodySmall.copyWith(color: c.textSecondary)),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: c.textTertiary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 原始文件选项磁贴
+class _RawFileTile extends StatelessWidget {
+  const _RawFileTile({
+    required this.fileName,
+    required this.rawPath,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String fileName;
+  final String rawPath;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppSemanticColors.of(context);
+    return Material(
+      color: selected ? c.primary.withOpacity(0.1) : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: [
+              Icon(
+                selected ? Icons.check_circle : Icons.description_outlined,
+                size: 16,
+                color: selected ? c.primary : c.textSecondary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  fileName,
+                  style: AppTypography.bodySmall.copyWith(
+                    color: selected ? c.primary : c.textPrimary,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

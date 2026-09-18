@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../application/controller/chat_controller.dart';
+import '../../application/controller/provider_controller.dart';
 import '../../application/controller/session_controller.dart';
 import '../../application/controller/settings_controller.dart';
 import '../../core/core.dart';
@@ -273,13 +275,24 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
   /// 从相册选择图片（暂用 file_picker 代替）
   Future<void> _onPickFromGallery() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.image,
-        withData: true,
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 2048,
+        maxHeight: 2048,
+        imageQuality: 90,
       );
-      if (result != null && result.files.isNotEmpty) {
-        await _handleImageUpload(result.files.first);
-      }
+      if (picked == null) return;
+
+      // 把 XFile 适配成 PlatformFile 复用 _handleImageUpload
+      // image_picker 在 Android 13+ 使用系统 PhotoPicker，
+      // 不会产生 cache 副本，从 content URI 流式获取图片
+      final platformFile = PlatformFile(
+        name: picked.name,
+        path: picked.path,
+        size: await picked.length(),
+      );
+      await _handleImageUpload(platformFile);
     } catch (e) {
       log.error('选择图片失败: $e', StackTrace.current);
       if (mounted) {
@@ -295,6 +308,18 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('近期项目功能开发中')),
     );
+  }
+
+  /// 把图片从 file_picker 临时目录移动到 app 私有目录
+  ///
+  /// 已废弃：现在相册图片使用 image_picker，不产生 cache 副本。
+  /// 任意文件上传由 file_picker 处理，上传后立即删除 cache 文件。
+  @Deprecated('改用 image_picker，不再需要移动文件')
+  Future<String?> _moveToPrivateDir({
+    required String sourcePath,
+    required String fileName,
+  }) async {
+    return null;
   }
 
   Future<void> _handleImageUpload(PlatformFile file) async {
@@ -315,10 +340,16 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
       return;
     }
 
-    // 显示上传中状态
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('正在上传 ${file.name}...')),
+    // 立刻添加上传中的占位（在预览框显示 loading icon）
+    final attId = _composerStateKey.currentState?.addUploadingAttachment(
+      localPath: file.path!,
+      fileName: file.name,
     );
+
+    if (attId == null) {
+      log.error('无法访问 Composer state');
+      return;
+    }
 
     try {
       final provider = MinimaxProvider();
@@ -330,29 +361,40 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
       );
 
       if (fileId != null) {
-        // 创建多模态消息，使用 MiniMax 文件 ID
-        final chatCtrl = ref.read(chatControllerProvider);
-
-        // 只预览，不直接发送。把附件挂到 Composer 上等待用户确认。
-        _composerStateKey.currentState?.onImageUploaded(
+        // 上传完成 → 更新预览状态为 ready
+        _composerStateKey.currentState?.markAttachmentUploaded(
+          id: attId,
           fileId: fileId,
-          localPath: file.path!,
-          fileName: file.name,
         );
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('图片上传成功，可输入问题后发送')),
-        );
+        // 删除 file_picker 的临时副本
+        // 注意：image_picker 不产生 cache 副本，
+        // 这里只处理 file_picker 场景的兜底清理
+        try {
+          final tmp = File(file.path!);
+          if (tmp.existsSync()) {
+            await tmp.delete();
+            log.info('🗑️ 已清理临时文件: ${file.path}');
+          }
+        } catch (e) {
+          log.error('❌ 清理临时文件失败: $e');
+        }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('图片上传失败')),
-        );
+        _composerStateKey.currentState?.markAttachmentFailed(id: attId);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('图片上传失败')),
+          );
+        }
       }
     } catch (e) {
       log.error('图片上传失败: $e', StackTrace.current);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('图片上传失败: $e')),
-      );
+      _composerStateKey.currentState?.markAttachmentFailed(id: attId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('图片上传失败: $e')),
+        );
+      }
     }
   }
 
@@ -699,7 +741,7 @@ class _NoConfigBanner extends ConsumerWidget {
 // ════════════════════════════════════════════════════════
 
 class _MessageList extends ConsumerWidget {
-  const _MessageList({
+  _MessageList({
     required this.scroller,
     required this.streaming,
     required this.onCopyMessage,
@@ -712,8 +754,35 @@ class _MessageList extends ConsumerWidget {
   final void Function(String) onSearchWiki;
   final void Function(String) onWikiRefTap;
 
+  // 持有 container 用于在 callback 中读 Provider
+  ProviderContainer? _container;
+
+  /// 解析 MiniMax file_id → download_url
+  ///
+  /// 把 MiniMax API Key 缓存在这里，每次解析都从当前默认 Provider 配置取。
+  Future<String?> _resolveMmFile(String fileId) async {
+    final container = _container;
+    if (container == null) return null;
+    try {
+      final settingsCtrl = container.read(settingsControllerProvider);
+      final config = settingsCtrl.defaultConfig;
+      if (config == null) return null;
+      final provider = container.read(providerControllerProvider)
+          .resolveProvider(config);
+      if (provider is! MinimaxProvider) return null;
+      return await provider.retrieveFileDownloadUrl(
+        fileId: fileId,
+        apiKey: config.apiKey,
+      );
+    } catch (e) {
+      log.error('解析 mm_file:// 失败: $e');
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    _container = ProviderScope.containerOf(context);
     final messages = ref.watch(chatControllerProvider).messages;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!scroller.hasClients) return;
@@ -738,6 +807,8 @@ class _MessageList extends ConsumerWidget {
         return ChatBubble(
           role: isUser ? ChatBubbleRole.user : ChatBubbleRole.assistant,
           content: msg.content,
+          parts: msg.parts,
+          resolveFileUrl: _resolveMmFile,
           reasoning: msg.reasoning,
           toolCalls: msg.toolCalls,
           toolResults: item.toolResults,
@@ -1017,16 +1088,43 @@ class _Composer extends ConsumerStatefulWidget {
   ConsumerState<_Composer> createState() => _ComposerState();
 }
 
+/// 附件状态：上传中 / 已就绪 / 失败
+enum _AttachmentStatus { uploading, ready, failed }
+
 /// 待发送的附件（图片上传后暂存，等待用户确认）
 class _PendingAttachment {
   const _PendingAttachment({
+    required this.id,
     required this.fileId,
     required this.localPath,
     required this.fileName,
+    required this.status,
   });
+  final String id;
   final String fileId;
   final String localPath;
   final String fileName;
+  final _AttachmentStatus status;
+
+  bool get isReady => status == _AttachmentStatus.ready;
+  bool get isUploading => status == _AttachmentStatus.uploading;
+  bool get isFailed => status == _AttachmentStatus.failed;
+
+  _PendingAttachment copyWith({
+    String? id,
+    String? fileId,
+    String? localPath,
+    String? fileName,
+    _AttachmentStatus? status,
+  }) {
+    return _PendingAttachment(
+      id: id ?? this.id,
+      fileId: fileId ?? this.fileId,
+      localPath: localPath ?? this.localPath,
+      fileName: fileName ?? this.fileName,
+      status: status ?? this.status,
+    );
+  }
 }
 
 class _ComposerState extends ConsumerState<_Composer> {
@@ -1052,7 +1150,56 @@ class _ComposerState extends ConsumerState<_Composer> {
     }
   }
 
-  /// 处理上传结果：在 Composer 上方显示预览，附带快捷建议
+  /// 添加上传中的占位附件（图片已选但未完成上传）
+  ///
+  /// 返回该附件的 id（用 fileName+timestamp），用于上传完成后回调更新。
+  String addUploadingAttachment({
+    required String localPath,
+    required String fileName,
+  }) {
+    final id = '${DateTime.now().microsecondsSinceEpoch}_$fileName';
+    setState(() {
+      _pendingAttachments.add(_PendingAttachment(
+        id: id,
+        fileId: '',
+        localPath: localPath,
+        fileName: fileName,
+        status: _AttachmentStatus.uploading,
+      ));
+      _panelOpen = false;
+    });
+    return id;
+  }
+
+  /// 更新附件状态：上传完成（成功）
+  void markAttachmentUploaded({
+    required String id,
+    required String fileId,
+  }) {
+    setState(() {
+      final idx = _pendingAttachments.indexWhere((a) => a.id == id);
+      if (idx < 0) return;
+      _pendingAttachments[idx] = _pendingAttachments[idx].copyWith(
+        fileId: fileId,
+        status: _AttachmentStatus.ready,
+      );
+    });
+  }
+
+  /// 更新附件状态：上传失败
+  void markAttachmentFailed({required String id}) {
+    setState(() {
+      final idx = _pendingAttachments.indexWhere((a) => a.id == id);
+      if (idx < 0) return;
+      _pendingAttachments[idx] = _pendingAttachments[idx].copyWith(
+        status: _AttachmentStatus.failed,
+      );
+    });
+  }
+
+  /// 处理上传结果（在 Composer 上方显示预览，附带快捷建议）
+  ///
+  /// 兼容旧接口：直接以 ready 状态添加附件。
   void onImageUploaded({
     required String fileId,
     required String localPath,
@@ -1060,9 +1207,11 @@ class _ComposerState extends ConsumerState<_Composer> {
   }) {
     setState(() {
       _pendingAttachments.add(_PendingAttachment(
+        id: '${DateTime.now().microsecondsSinceEpoch}_$fileName',
         fileId: fileId,
         localPath: localPath,
         fileName: fileName,
+        status: _AttachmentStatus.ready,
       ));
       _panelOpen = false;
     });
@@ -1075,21 +1224,18 @@ class _ComposerState extends ConsumerState<_Composer> {
     });
   }
 
-  /// 点击快捷建议：填入输入框并发送
-  void _useSuggestion(String text) {
+  /// 点击快捷建议：填入输入框并发送（带附件一起）
+  Future<void> _useSuggestion(String text) async {
     widget.controller.text = text;
-    widget.onSend();
-    // 发送后清空附件
-    setState(() {
-      _pendingAttachments.clear();
-    });
+    await _handleSend();
   }
 
-  /// 点击发送按钮时，若有待发送附件则一并发送
+  /// 点击发送按钮时，若有就绪的附件则一并发送
   Future<void> _handleSend() async {
-    if (_pendingAttachments.isNotEmpty) {
+    final ready = _pendingAttachments.where((a) => a.isReady).toList();
+    if (ready.isNotEmpty) {
       // 把附件 parts 传给上层发送
-      final parts = _pendingAttachments
+      final parts = ready
           .map((a) => MiniMaxFileIdPart(a.fileId, 'image'))
           .toList();
       widget.onSendWithAttachments(
@@ -1147,8 +1293,9 @@ class _ComposerState extends ConsumerState<_Composer> {
                 onRemove: _removeAttachment,
               ),
             ),
-          // 快捷问题建议（仅当有待发送图片时显示）
-          if (_pendingAttachments.isNotEmpty)
+          // 快捷问题建议（仅当附件全部 ready 时显示）
+          if (_pendingAttachments.isNotEmpty &&
+              _pendingAttachments.every((a) => a.isReady))
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: _SuggestionBar(
@@ -1318,6 +1465,42 @@ class _AttachmentPreview extends StatelessWidget {
                     ),
                   ),
                 ),
+                // 上传中遮罩 + loading
+                if (att.isUploading)
+                  Positioned.fill(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        alignment: Alignment.center,
+                        child: const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                // 失败遮罩 + 重试按钮
+                if (att.isFailed)
+                  Positioned.fill(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        color: Colors.red.withValues(alpha: 0.45),
+                        alignment: Alignment.center,
+                        child: const Icon(
+                          Icons.refresh_rounded,
+                          color: Colors.white,
+                          size: 26,
+                        ),
+                      ),
+                    ),
+                  ),
                 // 删除按钮
                 Positioned(
                   top: 2,

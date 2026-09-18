@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -18,6 +19,7 @@ class ChatBubble extends StatefulWidget {
     super.key,
     required this.role,
     required this.content,
+    this.parts = const [],
     this.wikiRefs,
     this.isStreaming = false,
     this.onWikiRefTap,
@@ -25,14 +27,24 @@ class ChatBubble extends StatefulWidget {
     this.reasoning,
     this.toolCalls = const [],
     this.toolResults = const [],
+    this.resolveFileUrl,
   });
-
   final ChatBubbleRole role;
   final String content;
+
+  /// 多模态内容片段（图片等）
+  final List<MessagePart> parts;
+
   final List<String>? wikiRefs;
   final bool isStreaming;
   final ValueChanged<String>? onWikiRefTap;
   final VoidCallback? onLongPress;
+
+  /// 异步解析 MiniMax file_id 到可访问的 download_url
+  ///
+  /// 签名：`(fileId) -> Future<String?>`
+  /// 返回 null 时，UI 显示占位 badge。
+  final Future<String?> Function(String fileId)? resolveFileUrl;
 
   /// 思考过程内容（仅 assistant 角色有意义）
   final String? reasoning;
@@ -52,7 +64,71 @@ class _ChatBubbleState extends State<ChatBubble> {
   bool _toolCallsExpanded = false;
   bool _toolResultsExpanded = false;
 
+  /// mm_file://{file_id} → resolved download_url 缓存
+  final Map<String, String> _resolvedUrls = {};
+  final Set<String> _resolvingIds = {};
+
   bool get _isUser => widget.role == ChatBubbleRole.user;
+
+  /// 消息中是否包含图片
+  bool get _hasImages =>
+      widget.parts.any((p) => p is ImageUrlPart || p is MiniMaxFileIdPart);
+
+  @override
+  void initState() {
+    super.initState();
+    _kickOffResolves();
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_listEquals(oldWidget.parts, widget.parts)) {
+      _kickOffResolves();
+    }
+  }
+
+  bool _listEquals(List<MessagePart> a, List<MessagePart> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].runtimeType != b[i].runtimeType) return false;
+      if (a[i] is MiniMaxFileIdPart &&
+          b[i] is MiniMaxFileIdPart &&
+          (a[i] as MiniMaxFileIdPart).fileId !=
+              (b[i] as MiniMaxFileIdPart).fileId) {
+        return false;
+      }
+      if (a[i] is ImageUrlPart &&
+          b[i] is ImageUrlPart &&
+          (a[i] as ImageUrlPart).url != (b[i] as ImageUrlPart).url) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// 启动所有 file_id → url 的解析任务
+  void _kickOffResolves() {
+    if (widget.resolveFileUrl == null) return;
+    for (final part in widget.parts) {
+      if (part is MiniMaxFileIdPart) {
+        final id = part.fileId;
+        if (id.isEmpty) continue;
+        if (_resolvedUrls.containsKey(id)) continue;
+        if (_resolvingIds.contains(id)) continue;
+        _resolvingIds.add(id);
+        widget.resolveFileUrl!(id).then((url) {
+          if (!mounted) return;
+          setState(() {
+            _resolvingIds.remove(id);
+            if (url != null && url.isNotEmpty) {
+              _resolvedUrls[id] = url;
+            }
+          });
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -88,6 +164,11 @@ class _ChatBubbleState extends State<ChatBubble> {
                   if (!_isUser && widget.toolResults.isNotEmpty) ...[
                     _buildToolResultsBlock(c),
                     const SizedBox(height: AppSpacing.xs),
+                  ],
+                  if (_isUser && _hasImages) ...[
+                    _buildImageStrip(c),
+                    if (widget.content.isNotEmpty)
+                      const SizedBox(height: AppSpacing.xs),
                   ],
                   if (widget.content.isNotEmpty) _buildBubble(c),
                   if (widget.wikiRefs != null && widget.wikiRefs!.isNotEmpty) ...[
@@ -456,6 +537,154 @@ class _ChatBubbleState extends State<ChatBubble> {
     } catch (_) {
       return raw;
     }
+  }
+
+  /// 图片预览条：水平展示消息中的图片
+  Widget _buildImageStrip(AppSemanticColors c) {
+    final images = widget.parts
+        .where((p) => p is ImageUrlPart || p is MiniMaxFileIdPart)
+        .toList();
+    if (images.isEmpty) return const SizedBox.shrink();
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 240),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Wrap(
+          spacing: 4,
+          runSpacing: 4,
+          children: images.map((part) {
+            return _buildImageThumbnail(part, c);
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  /// 单张图片缩略图
+  Widget _buildImageThumbnail(MessagePart part, AppSemanticColors c) {
+    final size = 96.0;
+    final placeholder = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(color: c.surfaceVariant),
+      child: Icon(Icons.image_outlined, color: c.textTertiary),
+    );
+
+    if (part is ImageUrlPart) {
+      final url = part.url;
+      if (url.startsWith('file://')) {
+        final path = url.substring(7);
+        return _fileImage(path, size, placeholder);
+      }
+      if (url.startsWith('mm_file://')) {
+        final fileId = url.replaceFirst('mm_file://', '');
+        return _mmFileThumbnail(fileId, size, c);
+      }
+      // http(s) URL
+      return Image.network(
+        url,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => placeholder,
+        loadingBuilder: (ctx, child, p) =>
+            p == null ? child : placeholder,
+      );
+    }
+
+    if (part is MiniMaxFileIdPart) {
+      return _mmFileThumbnail(part.fileId, size, c);
+    }
+
+    return placeholder;
+  }
+
+  Widget _fileImage(String path, double size, Widget placeholder) {
+    final file = File(path);
+    if (!file.existsSync()) return placeholder;
+    return Image.file(
+      file,
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => placeholder,
+    );
+  }
+
+  /// mm_file:// 协议的展示：
+  /// - 解析中：loading icon
+  /// - 解析成功：Image.network 加载缩略图
+  /// - 解析失败：占位 badge + file_id
+  Widget _mmFileThumbnail(String fileId, double size, AppSemanticColors c) {
+    final placeholder = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(color: c.surfaceVariant),
+      child: Icon(Icons.image_outlined, color: c.textTertiary),
+    );
+
+    // 解析中
+    if (_resolvingIds.contains(fileId)) {
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: c.surfaceVariant,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        alignment: Alignment.center,
+        child: const SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+
+    final url = _resolvedUrls[fileId];
+    if (url == null) {
+      // 解析失败 → 显示 badge
+      return _mmFileBadge(fileId, size, c);
+    }
+
+    return Image.network(
+      url,
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => _mmFileBadge(fileId, size, c),
+      loadingBuilder: (ctx, child, p) => p == null ? child : placeholder,
+    );
+  }
+
+  /// mm_file:// 协议的展示：缩略图占位 + file_id 提示
+  Widget _mmFileBadge(String fileId, double size, AppSemanticColors c) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: c.surfaceVariant,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: c.border, width: 0.5),
+      ),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(4),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.image_outlined, color: c.textSecondary, size: 22),
+          const SizedBox(height: 4),
+          Text(
+            fileId,
+            style: TextStyle(fontSize: 9, color: c.textTertiary),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildWikiRefs(AppSemanticColors c) {

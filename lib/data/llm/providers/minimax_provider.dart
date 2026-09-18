@@ -418,15 +418,19 @@ class MinimaxProvider implements LlmProvider {
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final fileObj = json['file'] as Map<String, dynamic>?;
+        log.debug('📦 文件对象字段: ${fileObj?.keys.toList()}');
         final downloadUrl =
-            json['file']?['download_url'] as String?;
+            fileObj?['download_url'] as String?;
         if (downloadUrl != null && downloadUrl.isNotEmpty) {
           log.debug('🔗 文件 $fileId 下载链接：${_maskUrl(downloadUrl)}');
           return downloadUrl;
         }
       }
 
-      log.error('❌ 获取文件下载链接失败: ${response.statusCode}');
+      log.error(
+        '❌ 获取文件下载链接失败: ${response.statusCode} body=${response.body}',
+      );
       return null;
     } catch (e, st) {
       log.error('❌ 文件检索异常: $e', st);

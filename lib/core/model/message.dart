@@ -47,27 +47,83 @@ class TextPart extends MessagePart {
 }
 
 /// 图片 URL 片段
+///
+/// [url] 原图 URL（file://、mm_file:// 或 https://）
+/// [thumbnailPath] 本地缩略图路径（私有目录，UI 显示优先用这个）
+/// [providerId] 此 URL 适用的 provider ID，用于切平台时判定：
+/// - 当前 provider == providerId：可直接复用
+/// - 当前 provider != providerId：需要重新上传（不同平台的 URL 协议不同）
+/// [detail] OpenAI 协议的 detail 级别
 class ImageUrlPart extends MessagePart {
-  const ImageUrlPart(this.url, {this.detail = 'auto'});
+  const ImageUrlPart(
+    this.url, {
+    this.detail = 'auto',
+    this.thumbnailPath,
+    required this.providerId,
+  });
   final String url;
   final String detail; // 'auto' / 'low' / 'high'
+  final String? thumbnailPath;
+  final String providerId;
+
+  ImageUrlPart copyWith({
+    String? url,
+    String? detail,
+    String? thumbnailPath,
+    String? providerId,
+  }) =>
+      ImageUrlPart(
+        url ?? this.url,
+        detail: detail ?? this.detail,
+        thumbnailPath: thumbnailPath ?? this.thumbnailPath,
+        providerId: providerId ?? this.providerId,
+      );
 }
 
 /// MiniMax 文件 ID 片段（用于引用上传到 MiniMax 的文件）
 ///
 /// 使用方式：
 /// 1. 先调用 `MinimaxProvider.uploadFile()` 上传文件获取 file_id
-/// 2. 创建 `MiniMaxFileIdPart(fileId, type)` 添加到消息
+/// 2. 创建 `MiniMaxFileIdPart(fileId, type, providerId: 'minimax')` 添加到消息
 /// 3. MiniMaxProvider 会将其序列化为 `mm_file://{file_id}` 格式
 ///
 /// 文档：https://platform.minimax.cn/docs/api-reference/file-management-upload
+///
+/// [providerId] 标记此 part 属于哪个 provider。
+/// 当用户切换 provider 时，渲染/发送逻辑能识别该 part 是否仍可复用：
+/// - 当前 provider == providerId：可直接复用（thumbnailPath 有效，mm_file:// 可发送）
+/// - 当前 provider != providerId：需要重新上传
+///
+/// [thumbnailPath] 本地缩略图路径（私有目录），UI 优先用它显示
 class MiniMaxFileIdPart extends MessagePart {
-  const MiniMaxFileIdPart(this.fileId, this.type);
+  const MiniMaxFileIdPart(
+    this.fileId,
+    this.type, {
+    required this.providerId,
+    this.thumbnailPath,
+  });
   final String fileId;
   final String type; // 'image' / 'video' / 'audio'
 
+  /// 上传此文件时使用的 provider ID（用于切平台时判定）
+  final String providerId;
+
+  /// 本地缩略图路径（私有目录，UI 优先用它显示）
+  final String? thumbnailPath;
+
   /// 转为 MiniMax API 格式的 URL（mm_file:// 协议）
   String toMinimaxUrl() => 'mm_file://$fileId';
+
+  MiniMaxFileIdPart copyWith({
+    String? thumbnailPath,
+    String? providerId,
+  }) =>
+      MiniMaxFileIdPart(
+        fileId,
+        type,
+        providerId: providerId ?? this.providerId,
+        thumbnailPath: thumbnailPath ?? this.thumbnailPath,
+      );
 }
 
 /// 消息数据模型（不可变）
@@ -273,7 +329,22 @@ class Message {
       'parts': parts.map((p) {
         if (p is TextPart) return {'type': 'text', 'text': p.text};
         if (p is ImageUrlPart) {
-          return {'type': 'image_url', 'url': p.url, 'detail': p.detail};
+          return {
+            'type': 'image_url',
+            'url': p.url,
+            'detail': p.detail,
+            'providerId': p.providerId,
+            if (p.thumbnailPath != null) 'thumbnail': p.thumbnailPath,
+          };
+        }
+        if (p is MiniMaxFileIdPart) {
+          return {
+            'type': 'mm_file_id',
+            'fileId': p.fileId,
+            'mime': p.type,
+            'providerId': p.providerId,
+            if (p.thumbnailPath != null) 'thumbnail': p.thumbnailPath,
+          };
         }
         return <String, dynamic>{};
       }).toList(),
@@ -306,6 +377,16 @@ class Message {
         return ImageUrlPart(
           p['url'] as String? ?? '',
           detail: p['detail'] as String? ?? 'auto',
+          thumbnailPath: p['thumbnail'] as String?,
+          providerId: p['providerId'] as String? ?? 'unknown',
+        );
+      }
+      if (type == 'mm_file_id') {
+        return MiniMaxFileIdPart(
+          p['fileId'] as String? ?? '',
+          p['mime'] as String? ?? 'image',
+          providerId: p['providerId'] as String? ?? 'minimax',
+          thumbnailPath: p['thumbnail'] as String?,
         );
       }
       return TextPart(p['text'] as String? ?? '');

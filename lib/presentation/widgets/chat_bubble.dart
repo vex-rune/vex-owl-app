@@ -165,12 +165,8 @@ class _ChatBubbleState extends State<ChatBubble> {
                     _buildToolResultsBlock(c),
                     const SizedBox(height: AppSpacing.xs),
                   ],
-                  if (_isUser && _hasImages) ...[
-                    _buildImageStrip(c),
-                    if (widget.content.isNotEmpty)
-                      const SizedBox(height: AppSpacing.xs),
-                  ],
-                  if (widget.content.isNotEmpty) _buildBubble(c),
+                  if (widget.content.isNotEmpty || (_isUser && _hasImages))
+                    _buildBubble(c),
                   if (widget.wikiRefs != null && widget.wikiRefs!.isNotEmpty) ...[
                     const SizedBox(height: AppSpacing.xs),
                     _buildWikiRefs(c),
@@ -187,6 +183,9 @@ class _ChatBubbleState extends State<ChatBubble> {
   Widget _buildBubble(AppSemanticColors c) {
     final screenWidth = MediaQuery.of(context).size.width;
     final maxBubbleWidth = (screenWidth * 0.78).clamp(240.0, 560.0);
+
+    // 判断用户消息是否同时包含图片和文字
+    final bool hasInlineImages = _isUser && _hasImages;
 
     return Container(
       constraints: BoxConstraints(maxWidth: maxBubbleWidth),
@@ -215,20 +214,27 @@ class _ChatBubbleState extends State<ChatBubble> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_isUser)
-            Text(
-              widget.content,
-              style: TextStyle(
-                fontSize: 15,
-                color: c.onPrimary,
-                height: 1.45,
-              ),
-            )
-          else
-            SimpleMarkdownText(
-              content: widget.content.isEmpty ? ' ' : widget.content,
-              color: c.textPrimary,
-            ),
+          // 缩略图（仅用户消息且含图片时，嵌入气泡内部）
+          if (hasInlineImages) ...[
+            _buildImageStrip(c),
+            if (widget.content.isNotEmpty)
+              const SizedBox(height: AppSpacing.xs),
+          ],
+          // 文本内容
+          if (widget.content.isNotEmpty)
+            _isUser
+                ? Text(
+                    widget.content,
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: c.onPrimary,
+                      height: 1.45,
+                    ),
+                  )
+                : SimpleMarkdownText(
+                    content: widget.content.isEmpty ? ' ' : widget.content,
+                    color: c.textPrimary,
+                  ),
           if (widget.isStreaming && widget.content.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -571,6 +577,12 @@ class _ChatBubbleState extends State<ChatBubble> {
       child: Icon(Icons.image_outlined, color: c.textTertiary),
     );
 
+    // 1) 优先使用本地缩略图（私有目录）
+    final thumb = _extractThumbnail(part);
+    if (thumb != null) {
+      return _fileImage(thumb, size, placeholder);
+    }
+
     if (part is ImageUrlPart) {
       final url = part.url;
       if (url.startsWith('file://')) {
@@ -598,6 +610,17 @@ class _ChatBubbleState extends State<ChatBubble> {
     }
 
     return placeholder;
+  }
+
+  /// 提取本地缩略图路径
+  String? _extractThumbnail(MessagePart part) {
+    if (part is ImageUrlPart) {
+      return part.thumbnailPath;
+    }
+    if (part is MiniMaxFileIdPart) {
+      return part.thumbnailPath;
+    }
+    return null;
   }
 
   Widget _fileImage(String path, double size, Widget placeholder) {
@@ -673,7 +696,7 @@ class _ChatBubbleState extends State<ChatBubble> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.image_outlined, color: c.textSecondary, size: 22),
+          Icon(Icons.broken_image_outlined, color: c.error, size: 22),
           const SizedBox(height: 4),
           Text(
             fileId,

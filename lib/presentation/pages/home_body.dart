@@ -5,6 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+
+import '../../application/service/thumbnail_generator.dart';
 
 import '../../application/controller/chat_controller.dart';
 import '../../application/controller/provider_controller.dart';
@@ -344,6 +347,7 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
     final attId = _composerStateKey.currentState?.addUploadingAttachment(
       localPath: file.path!,
       fileName: file.name,
+      providerId: config.providerId,
     );
 
     if (attId == null) {
@@ -353,39 +357,59 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
 
     try {
       final provider = MinimaxProvider();
-      // 图片使用 videoGenerationInput purpose（支持 jpg、png、webp 等）
+
+      // 1) 把原图从临时目录复制到 app 私有目录（持久化保留）
+      final privateOriginalPath =
+          await _copyToPrivateDir(file.path!, file.name);
+      if (privateOriginalPath == null) {
+        _composerStateKey.currentState?.markAttachmentFailed(id: attId);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('保存图片失败')),
+          );
+        }
+        return;
+      }
+
+      // 2) 上传到 MiniMax
       final fileId = await provider.uploadFile(
-        filePath: file.path!,
+        filePath: privateOriginalPath,
         purpose: MiniMaxFilePurpose.videoGenerationInput,
         apiKey: config.apiKey,
       );
 
-      if (fileId != null) {
-        // 上传完成 → 更新预览状态为 ready
-        _composerStateKey.currentState?.markAttachmentUploaded(
-          id: attId,
-          fileId: fileId,
-        );
-
-        // 删除 file_picker 的临时副本
-        // 注意：image_picker 不产生 cache 副本，
-        // 这里只处理 file_picker 场景的兜底清理
-        try {
-          final tmp = File(file.path!);
-          if (tmp.existsSync()) {
-            await tmp.delete();
-            log.info('🗑️ 已清理临时文件: ${file.path}');
-          }
-        } catch (e) {
-          log.error('❌ 清理临时文件失败: $e');
-        }
-      } else {
+      if (fileId == null) {
         _composerStateKey.currentState?.markAttachmentFailed(id: attId);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('图片上传失败')),
           );
         }
+        return;
+      }
+
+      // 3) 生成缩略图（512px JPEG，存到私有目录）
+      final thumbPath =
+          await ThumbnailGenerator.generate(privateOriginalPath);
+
+      // 4) 上传完成 → 更新预览状态为 ready
+      _composerStateKey.currentState?.markAttachmentUploaded(
+        id: attId,
+        fileId: fileId,
+        providerId: config.providerId,
+        originalPath: privateOriginalPath,
+        thumbnailPath: thumbPath,
+      );
+
+      // 5) 删除原临时文件（如果有）
+      try {
+        final tmp = File(file.path!);
+        if (tmp.existsSync() && tmp.path != privateOriginalPath) {
+          await tmp.delete();
+          log.info('🗑️ 已清理临时文件: ${file.path}');
+        }
+      } catch (e) {
+        log.error('❌ 清理临时文件失败: $e');
       }
     } catch (e) {
       log.error('图片上传失败: $e', StackTrace.current);
@@ -395,6 +419,45 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
           SnackBar(content: Text('图片上传失败: $e')),
         );
       }
+    }
+  }
+
+  /// 把图片从临时目录复制到 app 私有目录
+  ///
+  /// 不使用 rename 是为了保留原始文件（部分场景下还可能需要访问）
+  Future<String?> _copyToPrivateDir(String sourcePath, String fileName) async {
+    try {
+      final src = File(sourcePath);
+      if (!src.existsSync()) {
+        log.info('⚠️ 源文件不存在: $sourcePath');
+        return null;
+      }
+
+      final docsDir = await getApplicationDocumentsDirectory();
+      final mediaDir = Directory('${docsDir.path}/media');
+      if (!await mediaDir.exists()) {
+        await mediaDir.create(recursive: true);
+      }
+
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final ext = fileName.contains('.')
+          ? fileName.substring(fileName.lastIndexOf('.'))
+          : '.jpg';
+      final newName = '${ts}_$fileName';
+      final destPath = '${mediaDir.path}/$newName';
+
+      await src.copy(destPath);
+
+      final dest = File(destPath);
+      if (dest.existsSync()) {
+        log.info('✅ 原图已保存到私有目录: $destPath');
+        return destPath;
+      }
+      log.error('❌ 复制后目标不存在: $destPath');
+      return null;
+    } catch (e, st) {
+      log.error('❌ 复制文件失败: $e', st);
+      return null;
     }
   }
 
@@ -1099,12 +1162,25 @@ class _PendingAttachment {
     required this.localPath,
     required this.fileName,
     required this.status,
+    required this.providerId,
+    this.originalPath,
+    this.thumbnailPath,
   });
   final String id;
   final String fileId;
   final String localPath;
   final String fileName;
   final _AttachmentStatus status;
+
+  /// 此附件上传时使用的 provider ID
+  /// 用于切平台时判定是否需要重新上传
+  final String providerId;
+
+  /// 原图路径（私有目录的完整路径）
+  final String? originalPath;
+
+  /// 缩略图路径（私有目录的完整路径）
+  final String? thumbnailPath;
 
   bool get isReady => status == _AttachmentStatus.ready;
   bool get isUploading => status == _AttachmentStatus.uploading;
@@ -1116,6 +1192,9 @@ class _PendingAttachment {
     String? localPath,
     String? fileName,
     _AttachmentStatus? status,
+    String? providerId,
+    String? originalPath,
+    String? thumbnailPath,
   }) {
     return _PendingAttachment(
       id: id ?? this.id,
@@ -1123,6 +1202,9 @@ class _PendingAttachment {
       localPath: localPath ?? this.localPath,
       fileName: fileName ?? this.fileName,
       status: status ?? this.status,
+      providerId: providerId ?? this.providerId,
+      originalPath: originalPath ?? this.originalPath,
+      thumbnailPath: thumbnailPath ?? this.thumbnailPath,
     );
   }
 }
@@ -1152,10 +1234,13 @@ class _ComposerState extends ConsumerState<_Composer> {
 
   /// 添加上传中的占位附件（图片已选但未完成上传）
   ///
+  /// [providerId] 此附件上传使用的 provider ID，用于切平台时判定
+  ///
   /// 返回该附件的 id（用 fileName+timestamp），用于上传完成后回调更新。
   String addUploadingAttachment({
     required String localPath,
     required String fileName,
+    required String providerId,
   }) {
     final id = '${DateTime.now().microsecondsSinceEpoch}_$fileName';
     setState(() {
@@ -1165,6 +1250,7 @@ class _ComposerState extends ConsumerState<_Composer> {
         localPath: localPath,
         fileName: fileName,
         status: _AttachmentStatus.uploading,
+        providerId: providerId,
       ));
       _panelOpen = false;
     });
@@ -1175,12 +1261,18 @@ class _ComposerState extends ConsumerState<_Composer> {
   void markAttachmentUploaded({
     required String id,
     required String fileId,
+    required String providerId,
+    String? originalPath,
+    String? thumbnailPath,
   }) {
     setState(() {
       final idx = _pendingAttachments.indexWhere((a) => a.id == id);
       if (idx < 0) return;
       _pendingAttachments[idx] = _pendingAttachments[idx].copyWith(
         fileId: fileId,
+        providerId: providerId,
+        originalPath: originalPath,
+        thumbnailPath: thumbnailPath,
         status: _AttachmentStatus.ready,
       );
     });
@@ -1204,6 +1296,7 @@ class _ComposerState extends ConsumerState<_Composer> {
     required String fileId,
     required String localPath,
     required String fileName,
+    required String providerId,
   }) {
     setState(() {
       _pendingAttachments.add(_PendingAttachment(
@@ -1212,6 +1305,7 @@ class _ComposerState extends ConsumerState<_Composer> {
         localPath: localPath,
         fileName: fileName,
         status: _AttachmentStatus.ready,
+        providerId: providerId,
       ));
       _panelOpen = false;
     });
@@ -1234,9 +1328,14 @@ class _ComposerState extends ConsumerState<_Composer> {
   Future<void> _handleSend() async {
     final ready = _pendingAttachments.where((a) => a.isReady).toList();
     if (ready.isNotEmpty) {
-      // 把附件 parts 传给上层发送
+      // 把附件 parts 传给上层发送，附带缩略图路径和 providerId
       final parts = ready
-          .map((a) => MiniMaxFileIdPart(a.fileId, 'image'))
+          .map((a) => MiniMaxFileIdPart(
+                a.fileId,
+                'image',
+                providerId: a.providerId,
+                thumbnailPath: a.thumbnailPath,
+              ))
           .toList();
       widget.onSendWithAttachments(
         content: widget.controller.text.trim().isEmpty

@@ -53,6 +53,23 @@ class ImageUrlPart extends MessagePart {
   final String detail; // 'auto' / 'low' / 'high'
 }
 
+/// MiniMax 文件 ID 片段（用于引用上传到 MiniMax 的文件）
+///
+/// 使用方式：
+/// 1. 先调用 `MinimaxProvider.uploadFile()` 上传文件获取 file_id
+/// 2. 创建 `MiniMaxFileIdPart(fileId, type)` 添加到消息
+/// 3. MiniMaxProvider 会将其序列化为 `mm_file://{file_id}` 格式
+///
+/// 文档：https://platform.minimax.cn/docs/api-reference/file-management-upload
+class MiniMaxFileIdPart extends MessagePart {
+  const MiniMaxFileIdPart(this.fileId, this.type);
+  final String fileId;
+  final String type; // 'image' / 'video' / 'audio'
+
+  /// 转为 MiniMax API 格式的 URL（mm_file:// 协议）
+  String toMinimaxUrl() => 'mm_file://$fileId';
+}
+
 /// 消息数据模型（不可变）
 class Message {
   const Message({

@@ -79,6 +79,11 @@ class MinimaxRequest {
   /// - user / assistant / system：普通文本消息
   /// - assistant 含 tool_calls：携带 tool_calls 字段
   /// - tool：工具执行结果，带 tool_call_id
+  ///
+  /// 支持多模态内容（MessagePart）：
+  /// - TextPart：转为 {'type': 'text', 'text': '...'}
+  /// - ImageUrlPart：转为 {'type': 'image_url', 'image_url': {'url': '...'}}
+  /// - MiniMax 文件 ID：转为 {'type': 'image_url', 'image_url': {'url': 'minimax://file/xxx'}}
   List<Map<String, dynamic>> _serializeMessages() {
     return messages.map((msg) {
       final base = <String, dynamic>{
@@ -104,7 +109,8 @@ class MinimaxRequest {
         return base;
       }
 
-      base['content'] = msg.content;
+      // 处理多模态内容
+      base['content'] = _serializeContent(msg.parts);
 
       if (msg.role == MessageRole.tool) {
         // OpenAI 协议：tool 消息必须带 tool_call_id 与 content
@@ -114,6 +120,41 @@ class MinimaxRequest {
       }
       return base;
     }).toList();
+  }
+
+  /// 序列化消息内容（支持多模态）
+  ///
+  /// MiniMax-M3 支持的图片 URL 格式：
+  /// - https:// URL：直接使用
+  /// - mm_file://{file_id}：使用 MiniMax 上传后的文件 ID
+  dynamic _serializeContent(List<MessagePart> parts) {
+    if (parts.isEmpty) return '';
+
+    // 单个文本片段：直接返回字符串
+    if (parts.length == 1 && parts.first is TextPart) {
+      return (parts.first as TextPart).text;
+    }
+
+    // 多模态内容：转为数组格式
+    final contentList = <Map<String, dynamic>>[];
+    for (final part in parts) {
+      if (part is TextPart) {
+        contentList.add({'type': 'text', 'text': part.text});
+      } else if (part is ImageUrlPart) {
+        contentList.add({
+          'type': 'image_url',
+          'image_url': {'url': part.url},
+        });
+      } else if (part is MiniMaxFileIdPart) {
+        // MiniMax 文件 ID：使用 minimax://file/{file_id} 格式
+        contentList.add({
+          'type': 'image_url',
+          'image_url': {'url': part.toMinimaxUrl()},
+        });
+      }
+      // 其他类型的 Part 可以继续扩展
+    }
+    return contentList;
   }
 
   /// 完整 JSON 字符串（用于日志打印）

@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../../../core/core.dart';
 import '../llm_provider.dart';
 import '../models/minimax_models.dart';
+import '../models/minimax_file_purpose.dart';
 
 /// MINIMAX（MiniMax）官方 API Provider
 ///
@@ -43,7 +45,7 @@ class MinimaxProvider implements LlmProvider {
   ProviderCapabilities get capabilities => const ProviderCapabilities(
     streaming: true,
     toolCalls: true,
-    images: false,
+    images: true,  // MiniMax-M3 支持图片
     vision: true,
     systemPrompt: true,
   );
@@ -387,5 +389,136 @@ class MinimaxProvider implements LlmProvider {
   String _maskKey(String key) {
     if (key.length <= 8) return '****';
     return '${key.substring(0, 4)}...${key.substring(key.length - 4)}';
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  MiniMax-M3 专用：文件上传（多模态支持）
+  // ════════════════════════════════════════════════════════
+
+  /// 上传文件到 MiniMax
+  ///
+  /// [filePath] 本地文件路径
+  /// [purpose] 文件用途，见 [MiniMaxFilePurpose]
+  /// [apiKey] MiniMax API Key
+  ///
+  /// 返回 file_id，用于后续 API 调用
+  ///
+  /// 文档：https://api.minimax.cn/document/file
+  Future<String?> uploadFile({
+    required String filePath,
+    required MiniMaxFilePurpose purpose,
+    required String apiKey,
+  }) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        log.error('文件不存在: $filePath');
+        return null;
+      }
+
+      // 检查文件扩展名
+      final ext = filePath.split('.').last.toLowerCase();
+      final supported = MiniMaxFileLimits.supportedExtensions[purpose] ?? [];
+      if (supported.isNotEmpty && !supported.contains(ext)) {
+        log.error('不支持的文件类型: $ext，支持: ${supported.join(", ")}');
+        return null;
+      }
+
+      // 检查文件大小
+      final stat = await file.stat();
+      final limit = MiniMaxFileLimits.sizeLimits[purpose];
+      if (limit != null && stat.size > limit) {
+        final sizeMB = (stat.size / (1024 * 1024)).toStringAsFixed(1);
+        final limitMB = (limit / (1024 * 1024)).toStringAsFixed(0);
+        log.error('文件过大: ${sizeMB}MB，最大允许: ${limitMB}MB');
+        return null;
+      }
+
+      log.info('正在上传文件到 MiniMax: $filePath (purpose: ${purpose.value})');
+
+      final uri = Uri.parse('$_officialBaseUrl/files/upload');
+      final request = http.MultipartRequest('POST', uri);
+
+      // 添加 Header
+      request.headers['Authorization'] = 'Bearer $apiKey';
+
+      // 添加表单字段
+      request.fields['purpose'] = purpose.value;
+
+      // 添加文件
+      request.files.add(await http.MultipartFile.fromPath(
+        'file',
+        filePath,
+      ));
+
+      final streamedResponse = await request.send().timeout(
+        const Duration(seconds: 60),
+      );
+
+      final response = await http.Response.fromStream(streamedResponse);
+      log.debug('文件上传响应: ${response.statusCode}');
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        // MiniMax 响应结构：{"file": {"file_id": "...", ...}, "base_resp": {...}}
+        // 注意：file_id 可能是数字也可能是字符串，统一转 String
+        final rawId = json['file']?['file_id'];
+        final fileId = rawId?.toString();
+        if (fileId != null && fileId.isNotEmpty && fileId != 'null') {
+          log.info('文件上传成功: $fileId');
+          return fileId;
+        }
+      }
+
+      log.error('文件上传失败: ${response.statusCode} - ${response.body}');
+      return null;
+
+    } catch (e, st) {
+      log.error('文件上传异常: $e', st);
+      return null;
+    }
+  }
+
+  /// 将本地图片转换为 MiniMax 消息格式（base64）
+  ///
+  /// 用于在 messages 中直接发送图片（无需先上传）
+  static Map<String, dynamic> imageContent(String filePath, {String? mimeType}) {
+    final file = File(filePath);
+    if (!file.existsSync()) {
+      throw Exception('文件不存在: $filePath');
+    }
+
+    final bytes = file.readAsBytesSync();
+    final base64 = base64Encode(bytes);
+
+    final ext = filePath.split('.').last.toLowerCase();
+    final type = mimeType ?? _mimeTypeForExt(ext);
+
+    return {
+      'type': 'image_url',
+      'image_url': {
+        'url': 'data:$type;base64,$base64',
+      },
+    };
+  }
+
+  static String _mimeTypeForExt(String ext) {
+    switch (ext) {
+      case 'png':
+        return 'image/png';
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'heic':
+        return 'image/heic';
+      case 'heif':
+        return 'image/heif';
+      default:
+        return 'image/jpeg';
+    }
   }
 }

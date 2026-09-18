@@ -162,6 +162,20 @@ class ChatController extends ChangeNotifier {
   ///
   /// 修复 C3：添加 `_sending` 锁，防止并发调用
   Future<void> sendMessage(String content) async {
+    await sendMessageWithParts(
+      content: content,
+      parts: const [],
+    );
+  }
+
+  /// 发送带多模态内容的消息（支持图片、视频、音频等）
+  ///
+  /// [content] 文本内容
+  /// [parts] 多模态内容片段（如 MiniMaxFileIdPart）
+  Future<void> sendMessageWithParts({
+    required String content,
+    required List<MessagePart> parts,
+  }) async {
     if (content.trim().isEmpty) return;
 
     // 修复 C3：防止并发发送
@@ -204,11 +218,12 @@ class ChatController extends ChangeNotifier {
     }
     _inputTokenEstimate = tokens;
 
-    // 3. 添加用户消息
+    // 3. 添加用户消息（支持多模态内容）
     _currentSessionId = session.id;
     final userMessage = Message.user(
       sessionId: session.id,
       content: content.trim(),
+      parts: parts,
     );
     _messages = [..._messages, userMessage];
     log.info('📤 用户发送: "${content.trim().substring(0, content.trim().length > 30 ? 30 : content.trim().length)}${content.trim().length > 30 ? '...' : ''}"');

@@ -1,13 +1,17 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:file_picker/file_picker.dart';
 
 import '../../application/controller/chat_controller.dart';
 import '../../application/controller/session_controller.dart';
 import '../../application/controller/settings_controller.dart';
-import '../../core/model/api_config.dart';
-import '../../core/model/message.dart';
-import '../../core/model/session.dart';
+import '../../core/core.dart';
+import '../../data/llm/llm.dart';
 import '../../design_system/design_system.dart';
+import '../router/app_router.dart';
 import '../widgets/widgets.dart';
 
 /// 唯一页面：始终是 Chat 形态
@@ -28,6 +32,9 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
   final ScrollController _scroller = ScrollController();
   bool _composing = false;
   bool _autoCreated = false;
+
+  /// 暴露 Composer 的 state key（图片上传后回传到预览区）
+  final GlobalKey<_ComposerState> _composerStateKey = GlobalKey<_ComposerState>();
 
   @override
   void initState() {
@@ -92,13 +99,24 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
           Expanded(
             child: chatCtrl.messages.isEmpty
                 ? const _EmptyState()
-                : _MessageList(scroller: _scroller, streaming: isStreaming),
+                : _MessageList(
+                    scroller: _scroller,
+                    streaming: isStreaming,
+                    onCopyMessage: _copyMessage,
+                    onSearchWiki: _searchInWiki,
+                    onWikiRefTap: _openWikiRef,
+                  ),
           ),
           _Composer(
+            key: _composerStateKey,
             controller: _composer,
             onSend: _sendCurrent,
             onAttach: _onAttach,
             onPickModel: _showModelPicker,
+            onPickFromCamera: _onPickFromCamera,
+            onPickFromGallery: _onPickFromGallery,
+            onShowRecents: _onShowRecents,
+            onSendWithAttachments: _sendWithAttachments,
             showTokenCount: !isStreaming && chatCtrl.messages.isNotEmpty,
             tokenCount: chatCtrl.inputTokenEstimate,
             modelLabel: chatCtrl.activeModelName ?? '请配置模型',
@@ -142,6 +160,33 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
     chatCtrl.sendMessage(text);
   }
 
+  /// 发送文本 + 附件（图片）
+  Future<void> _sendWithAttachments({
+    required String content,
+    required List<MessagePart> parts,
+  }) async {
+    final text = content.trim().isEmpty ? '请分析这些图片' : content.trim();
+
+    final sessionCtrl = ref.read(sessionControllerProvider);
+    final chatCtrl = ref.read(chatControllerProvider);
+
+    Session? target = sessionCtrl.currentSession;
+    if (target == null) {
+      target = await sessionCtrl.createSession('新对话');
+      if (target == null || !mounted) return;
+    }
+
+    _composer.clear();
+
+    // 首条消息自动命名
+    final isFresh = target.name == '新对话' || target.name.trim().isEmpty;
+    if (isFresh) {
+      sessionCtrl.autoNameSession(target.id, text);
+    }
+
+    await chatCtrl.sendMessageWithParts(content: text, parts: parts);
+  }
+
   Future<void> _createNewSession() async {
     final s = await ref.read(sessionControllerProvider).createSession('新对话');
     if (s != null) {
@@ -157,10 +202,188 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
     );
   }
 
-  void _onAttach() {
+  // ════════════════════════════════════════════════════════
+  //  文件上传
+  // ════════════════════════════════════════════════════════
+
+  /// 选择并上传文件
+  Future<void> _onAttach() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: [
+          'txt', 'md', 'json', 'yaml', 'yml', 'csv', 'log',
+          'jpg', 'jpeg', 'png', 'gif', 'webp',
+          'pdf', 'doc', 'docx',
+          'mp3', 'm4a', 'wav',
+          'mp4', 'avi', 'mov', 'mkv',
+        ],
+        withData: true,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        final fileName = file.name;
+        final extension = fileName.split('.').last.toLowerCase();
+
+        // 文本文件：读取内容到输入框
+        if (_isTextFile(extension)) {
+          if (file.bytes != null) {
+            final content = String.fromCharCodes(file.bytes!);
+            _composer.text = content;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('已加载: $fileName')),
+            );
+          }
+        }
+        // 图片文件：尝试上传到 MiniMax
+        else if (_isImageFile(extension)) {
+          await _handleImageUpload(file);
+        }
+        // 其他文件：提示不支持
+        else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('暂不支持此格式: .$extension')),
+          );
+        }
+      }
+    } catch (e) {
+      log.error('选择文件失败: $e', StackTrace.current);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('选择文件失败: $e')),
+      );
+    }
+  }
+
+  bool _isTextFile(String ext) {
+    return ['txt', 'md', 'json', 'yaml', 'yml', 'csv', 'log'].contains(ext);
+  }
+
+  bool _isImageFile(String ext) {
+    return ['jpg', 'jpeg', 'png', 'gif', 'webp'].contains(ext);
+  }
+
+  /// 从相机拍照（暂未实现 camera 能力，复用文件选择）
+  Future<void> _onPickFromCamera() async {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('文件上传功能即将上线')),
+      const SnackBar(content: Text('相机功能暂未集成，请使用"文件"上传图片')),
     );
+  }
+
+  /// 从相册选择图片（暂用 file_picker 代替）
+  Future<void> _onPickFromGallery() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true,
+      );
+      if (result != null && result.files.isNotEmpty) {
+        await _handleImageUpload(result.files.first);
+      }
+    } catch (e) {
+      log.error('选择图片失败: $e', StackTrace.current);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('选择图片失败: $e')),
+        );
+      }
+    }
+  }
+
+  /// 显示近期上传的项目（暂未实现持久化）
+  Future<void> _onShowRecents() async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('近期项目功能开发中')),
+    );
+  }
+
+  Future<void> _handleImageUpload(PlatformFile file) async {
+    if (file.path == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('无法读取图片路径')),
+      );
+      return;
+    }
+
+    // 检查是否使用 MiniMax
+    final settingsCtrl = ref.read(settingsControllerProvider);
+    final config = settingsCtrl.defaultConfig;
+    if (config == null || config.providerId != 'minimax') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('图片上传仅支持 MiniMax 模型')),
+      );
+      return;
+    }
+
+    // 显示上传中状态
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('正在上传 ${file.name}...')),
+    );
+
+    try {
+      final provider = MinimaxProvider();
+      // 图片使用 videoGenerationInput purpose（支持 jpg、png、webp 等）
+      final fileId = await provider.uploadFile(
+        filePath: file.path!,
+        purpose: MiniMaxFilePurpose.videoGenerationInput,
+        apiKey: config.apiKey,
+      );
+
+      if (fileId != null) {
+        // 创建多模态消息，使用 MiniMax 文件 ID
+        final chatCtrl = ref.read(chatControllerProvider);
+
+        // 只预览，不直接发送。把附件挂到 Composer 上等待用户确认。
+        _composerStateKey.currentState?.onImageUploaded(
+          fileId: fileId,
+          localPath: file.path!,
+          fileName: file.name,
+        );
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('图片上传成功，可输入问题后发送')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('图片上传失败')),
+        );
+      }
+    } catch (e) {
+      log.error('图片上传失败: $e', StackTrace.current);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('图片上传失败: $e')),
+      );
+    }
+  }
+
+  // ════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
+  //  Wiki 相关
+  // ════════════════════════════════════════════════════════
+
+  /// 打开 Wiki 引用
+  void _openWikiRef(String ref) {
+    goRouter.go('/wiki?ref=$ref');
+  }
+
+  /// 在 Wiki 中搜索
+  Future<void> _searchInWiki(String query) async {
+    if (query.isEmpty) return;
+    goRouter.go('/wiki?search=${Uri.encodeComponent(query)}');
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  消息操作
+  // ════════════════════════════════════════════════════════
+
+  /// 复制消息到剪贴板
+  Future<void> _copyMessage(String content) async {
+    await Clipboard.setData(ClipboardData(text: content));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已复制到剪贴板')),
+      );
+    }
   }
 
   // ────────────────────────────────────────────
@@ -185,17 +408,6 @@ class _HomeChatBodyState extends ConsumerState<HomeChatBody> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading:
-                  Icon(Icons.bookmark_add_outlined, color: c.textSecondary),
-              title: const Text('存入 Wiki'),
-              onTap: () {
-                Navigator.of(sheetCtx).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('记忆入库功能即将上线')),
-                );
-              },
-            ),
             ListTile(
               leading:
                   Icon(Icons.delete_sweep_outlined, color: c.textSecondary),
@@ -487,9 +699,19 @@ class _NoConfigBanner extends ConsumerWidget {
 // ════════════════════════════════════════════════════════
 
 class _MessageList extends ConsumerWidget {
-  const _MessageList({required this.scroller, required this.streaming});
+  const _MessageList({
+    required this.scroller,
+    required this.streaming,
+    required this.onCopyMessage,
+    required this.onSearchWiki,
+    required this.onWikiRefTap,
+  });
   final ScrollController scroller;
   final bool streaming;
+  final void Function(String) onCopyMessage;
+  final void Function(String) onSearchWiki;
+  final void Function(String) onWikiRefTap;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final messages = ref.watch(chatControllerProvider).messages;
@@ -523,12 +745,14 @@ class _MessageList extends ConsumerWidget {
               streaming &&
               !isUser &&
               !item.isToolGroup,
-          onWikiRefTap: (ref) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('打开 Wiki: $ref')),
-            );
-          },
-          onLongPress: () => _showMsgMenu(context, msg, isUser),
+          onWikiRefTap: onWikiRefTap,
+          onLongPress: () => _showMsgMenu(
+            context,
+            content: msg.content,
+            isUser: isUser,
+            onCopy: () => onCopyMessage(msg.content),
+            onSearchWiki: () => onSearchWiki(msg.content),
+          ),
         );
       },
     );
@@ -597,7 +821,13 @@ class _MessageDisplayItem {
   final bool isToolGroup;
 }
 
-void _showMsgMenu(BuildContext context, Message msg, bool isUser) {
+void _showMsgMenu(
+  BuildContext context, {
+  required String content,
+  required bool isUser,
+  required VoidCallback onCopy,
+  required VoidCallback onSearchWiki,
+}) {
   final c = AppSemanticColors.of(context);
   showModalBottomSheet(
     context: context,
@@ -609,25 +839,19 @@ void _showMsgMenu(BuildContext context, Message msg, bool isUser) {
           ListTile(
             leading: Icon(Icons.copy, color: c.textSecondary),
             title: const Text('复制消息'),
-            onTap: () => Navigator.of(sheetCtx).pop(),
+            onTap: () {
+              Navigator.of(sheetCtx).pop();
+              onCopy();
+            },
           ),
-          if (!isUser)
-            ListTile(
-              leading: Icon(Icons.refresh, color: c.textSecondary),
-              title: const Text('重新生成回答'),
-              onTap: () => Navigator.of(sheetCtx).pop(),
-            ),
           ListTile(
             leading: Icon(Icons.search, color: c.textSecondary),
             title: const Text('在 Wiki 中搜索'),
-            onTap: () => Navigator.of(sheetCtx).pop(),
+            onTap: () {
+              Navigator.of(sheetCtx).pop();
+              onSearchWiki();
+            },
           ),
-          if (!isUser)
-            ListTile(
-              leading: Icon(Icons.bookmark_add_outlined, color: c.textSecondary),
-              title: const Text('添加到 Wiki'),
-              onTap: () => Navigator.of(sheetCtx).pop(),
-            ),
         ],
       ),
     ),
@@ -763,10 +987,15 @@ class _ComposerFiller extends StateNotifier<String> {
 
 class _Composer extends ConsumerStatefulWidget {
   const _Composer({
+    super.key,
     required this.controller,
     required this.onSend,
     required this.onAttach,
     required this.onPickModel,
+    required this.onPickFromCamera,
+    required this.onPickFromGallery,
+    required this.onShowRecents,
+    required this.onSendWithAttachments,
     required this.showTokenCount,
     required this.tokenCount,
     required this.modelLabel,
@@ -775,6 +1004,11 @@ class _Composer extends ConsumerStatefulWidget {
   final VoidCallback onSend;
   final VoidCallback onAttach;
   final VoidCallback onPickModel;
+  final VoidCallback onPickFromCamera;
+  final VoidCallback onPickFromGallery;
+  final VoidCallback onShowRecents;
+  final Future<void> Function({required String content, required List<MessagePart> parts})
+      onSendWithAttachments;
   final bool showTokenCount;
   final int tokenCount;
   final String modelLabel;
@@ -783,7 +1017,96 @@ class _Composer extends ConsumerStatefulWidget {
   ConsumerState<_Composer> createState() => _ComposerState();
 }
 
+/// 待发送的附件（图片上传后暂存，等待用户确认）
+class _PendingAttachment {
+  const _PendingAttachment({
+    required this.fileId,
+    required this.localPath,
+    required this.fileName,
+  });
+  final String fileId;
+  final String localPath;
+  final String fileName;
+}
+
 class _ComposerState extends ConsumerState<_Composer> {
+  bool _panelOpen = false;
+
+  /// 待发送的附件列表（上传成功后暂存，等待用户确认或自动发送）
+  final List<_PendingAttachment> _pendingAttachments = [];
+
+  /// 快捷问题建议（仅当有待发送图片时出现）
+  static const _imageSuggestions = ['这是什么', '找同款', '详细分析'];
+
+  void _togglePanel() {
+    setState(() {
+      _panelOpen = !_panelOpen;
+    });
+  }
+
+  void _closePanel() {
+    if (_panelOpen) {
+      setState(() {
+        _panelOpen = false;
+      });
+    }
+  }
+
+  /// 处理上传结果：在 Composer 上方显示预览，附带快捷建议
+  void onImageUploaded({
+    required String fileId,
+    required String localPath,
+    required String fileName,
+  }) {
+    setState(() {
+      _pendingAttachments.add(_PendingAttachment(
+        fileId: fileId,
+        localPath: localPath,
+        fileName: fileName,
+      ));
+      _panelOpen = false;
+    });
+  }
+
+  /// 删除某个附件预览
+  void _removeAttachment(int index) {
+    setState(() {
+      _pendingAttachments.removeAt(index);
+    });
+  }
+
+  /// 点击快捷建议：填入输入框并发送
+  void _useSuggestion(String text) {
+    widget.controller.text = text;
+    widget.onSend();
+    // 发送后清空附件
+    setState(() {
+      _pendingAttachments.clear();
+    });
+  }
+
+  /// 点击发送按钮时，若有待发送附件则一并发送
+  Future<void> _handleSend() async {
+    if (_pendingAttachments.isNotEmpty) {
+      // 把附件 parts 传给上层发送
+      final parts = _pendingAttachments
+          .map((a) => MiniMaxFileIdPart(a.fileId, 'image'))
+          .toList();
+      widget.onSendWithAttachments(
+        content: widget.controller.text.trim().isEmpty
+            ? '请分析这些图片'
+            : widget.controller.text.trim(),
+        parts: parts,
+      );
+      setState(() {
+        _pendingAttachments.clear();
+        widget.controller.clear();
+      });
+      return;
+    }
+    widget.onSend();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = AppSemanticColors.of(context);
@@ -815,6 +1138,24 @@ class _ComposerState extends ConsumerState<_Composer> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // 附件预览区（仅当有待发送图片时显示）
+          if (_pendingAttachments.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 4),
+              child: _AttachmentPreview(
+                attachments: _pendingAttachments,
+                onRemove: _removeAttachment,
+              ),
+            ),
+          // 快捷问题建议（仅当有待发送图片时显示）
+          if (_pendingAttachments.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _SuggestionBar(
+                suggestions: _imageSuggestions,
+                onPick: _useSuggestion,
+              ),
+            ),
           Row(
             children: [
               _ModelPill(label: widget.modelLabel, onTap: widget.onPickModel),
@@ -830,6 +1171,11 @@ class _ComposerState extends ConsumerState<_Composer> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              _AttachButton(
+                isOpen: _panelOpen,
+                onTap: _togglePanel,
+              ),
+              const SizedBox(width: 8),
               Expanded(
                 child: Container(
                   constraints: const BoxConstraints(maxHeight: 130),
@@ -858,7 +1204,7 @@ class _ComposerState extends ConsumerState<_Composer> {
                               contentPadding: EdgeInsets.zero,
                               counterText: '',
                             ),
-                            onSubmitted: (_) => widget.onSend(),
+                            onSubmitted: (_) => _handleSend(),
                           ),
                         ),
                       );
@@ -867,8 +1213,21 @@ class _ComposerState extends ConsumerState<_Composer> {
                 ),
               ),
               const SizedBox(width: 8),
-              _SendButton(hasText: hasText, onTap: widget.onSend),
+              _SendButton(hasText: hasText, onTap: _handleSend),
             ],
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            child: _panelOpen
+                ? _AttachPanel(
+                    onClose: _closePanel,
+                    onPickFile: widget.onAttach,
+                    onPickFromCamera: widget.onPickFromCamera,
+                    onPickFromGallery: widget.onPickFromGallery,
+                    onShowRecents: widget.onShowRecents,
+                  )
+                : const SizedBox.shrink(),
           ),
         ],
       ),
@@ -918,6 +1277,272 @@ class _ModelPill extends StatelessWidget {
     );
   }
 }
+
+/// 附件预览区（图片缩略图 + 删除按钮 + 添加占位）
+class _AttachmentPreview extends StatelessWidget {
+  const _AttachmentPreview({
+    required this.attachments,
+    required this.onRemove,
+  });
+  final List<_PendingAttachment> attachments;
+  final ValueChanged<int> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppSemanticColors.of(context);
+    return SizedBox(
+      height: 88,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: attachments.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (ctx, i) {
+          final att = attachments[i];
+          return SizedBox(
+            width: 88,
+            height: 88,
+            child: Stack(
+              children: [
+                // 图片缩略图
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.file(
+                      File(att.localPath),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: c.surfaceVariant,
+                        child: Icon(Icons.broken_image_outlined,
+                            color: c.textTertiary),
+                      ),
+                    ),
+                  ),
+                ),
+                // 删除按钮
+                Positioned(
+                  top: 2,
+                  right: 2,
+                  child: GestureDetector(
+                    onTap: () => onRemove(i),
+                    child: Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.6),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.close,
+                        size: 14,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// 快捷问题建议栏（豆包风格）
+class _SuggestionBar extends StatelessWidget {
+  const _SuggestionBar({
+    required this.suggestions,
+    required this.onPick,
+  });
+  final List<String> suggestions;
+  final ValueChanged<String> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppSemanticColors.of(context);
+    return SizedBox(
+      height: 36,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: suggestions.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (ctx, i) {
+          final text = suggestions[i];
+          return InkWell(
+            onTap: () => onPick(text),
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: c.surface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: c.border, width: 0.5),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    text,
+                    style: TextStyle(fontSize: 13, color: c.textPrimary),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.arrow_forward_rounded,
+                      size: 14, color: c.textSecondary),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AttachButton extends StatelessWidget {
+  const _AttachButton({required this.isOpen, required this.onTap});
+  final bool isOpen;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    final c = AppSemanticColors.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: isOpen ? c.primary.withValues(alpha: 0.12) : c.surfaceVariant,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: isOpen ? c.primary : c.border,
+            width: 0.5,
+          ),
+        ),
+        child: AnimatedRotation(
+          turns: isOpen ? 0.125 : 0,
+          duration: const Duration(milliseconds: 200),
+          child: Icon(
+            Icons.add_rounded,
+            size: 22,
+            color: isOpen ? c.primary : c.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 多功能面板：相机、相册、文件、近期项目
+///
+/// 点击加号后展开，再点加号收起。
+class _AttachPanel extends StatelessWidget {
+  const _AttachPanel({
+    required this.onClose,
+    required this.onPickFile,
+    required this.onPickFromCamera,
+    required this.onPickFromGallery,
+    required this.onShowRecents,
+  });
+  final VoidCallback onClose;
+  final VoidCallback onPickFile;
+  final VoidCallback onPickFromCamera;
+  final VoidCallback onPickFromGallery;
+  final VoidCallback onShowRecents;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppSemanticColors.of(context);
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      decoration: BoxDecoration(
+        color: c.surfaceVariant,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          _PanelTile(
+            icon: Icons.camera_alt_outlined,
+            label: '相机',
+            onTap: () {
+              onClose();
+              onPickFromCamera();
+            },
+          ),
+          const SizedBox(width: 8),
+          _PanelTile(
+            icon: Icons.photo_library_outlined,
+            label: '相册',
+            onTap: () {
+              onClose();
+              onPickFromGallery();
+            },
+          ),
+          const SizedBox(width: 8),
+          _PanelTile(
+            icon: Icons.attach_file_rounded,
+            label: '文件',
+            onTap: () {
+              onClose();
+              onPickFile();
+            },
+          ),
+          const SizedBox(width: 8),
+          _PanelTile(
+            icon: Icons.history_rounded,
+            label: '近期',
+            onTap: () {
+              onClose();
+              onShowRecents();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PanelTile extends StatelessWidget {
+  const _PanelTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    final c = AppSemanticColors.of(context);
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: c.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: c.border, width: 0.5),
+          ),
+          child: Column(
+            children: [
+              Icon(icon, size: 22, color: c.textPrimary),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                style: TextStyle(fontSize: 12, color: c.textSecondary),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
 
 class _SendButton extends StatelessWidget {
   const _SendButton({required this.hasText, required this.onTap});

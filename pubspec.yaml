@@ -29,6 +29,9 @@ dependencies:
   # HTTP 客户端
   http: ^1.6.0
 
+  # 文件选择
+  file_picker: ^8.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

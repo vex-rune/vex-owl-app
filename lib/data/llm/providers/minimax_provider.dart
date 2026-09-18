@@ -395,54 +395,6 @@ class MinimaxProvider implements LlmProvider {
   //  MiniMax-M3 专用：文件上传（多模态支持）
   // ════════════════════════════════════════════════════════
 
-  /// 通过 file_id 查询文件信息，返回 download_url
-  ///
-  /// 用于 UI 加载历史会话中已上传的文件缩略图。
-  ///
-  /// 文档：https://platform.minimax.cn/docs/api-reference/file-management-retrieve
-  ///
-  /// 返回 download_url（可作为 https URL 直接给 Image.network 使用），
-  /// file_id 不存在或已过期时返回 null。
-  Future<String?> retrieveFileDownloadUrl({
-    required String fileId,
-    required String apiKey,
-  }) async {
-    try {
-      final uri = Uri.parse('$_officialBaseUrl/files/retrieve?file_id=$fileId');
-      final response = await http.get(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $apiKey',
-        },
-      ).timeout(const Duration(seconds: 15));
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final fileObj = json['file'] as Map<String, dynamic>?;
-        log.debug('📦 文件对象字段: ${fileObj?.keys.toList()}');
-        final downloadUrl =
-            fileObj?['download_url'] as String?;
-        if (downloadUrl != null && downloadUrl.isNotEmpty) {
-          log.debug('🔗 文件 $fileId 下载链接：${_maskUrl(downloadUrl)}');
-          return downloadUrl;
-        }
-      }
-
-      log.error(
-        '❌ 获取文件下载链接失败: ${response.statusCode} body=${response.body}',
-      );
-      return null;
-    } catch (e, st) {
-      log.error('❌ 文件检索异常: $e', st);
-      return null;
-    }
-  }
-
-  String _maskUrl(String url) {
-    if (url.length <= 32) return '****';
-    return '${url.substring(0, 24)}...${url.substring(url.length - 8)}';
-  }
-
   /// 上传文件到 MiniMax
   ///
   /// [filePath] 本地文件路径

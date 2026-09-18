@@ -62,7 +62,7 @@ class OwlRoot {
   String get configDir => p.join(_rootPath!, 'config');
 
   /// `.owl/wiki/` 绝对路径
-  String get wikiDir => p.join(_rootPath!, 'wiki');
+  String get wikiDir => p.join(_rootPath!, '');
 
   // ── 初始化 ─────────────────────────────────────────────────────────────
 

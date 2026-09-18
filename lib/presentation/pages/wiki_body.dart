@@ -478,7 +478,6 @@ class _WikiBodyState extends ConsumerState<WikiBody> {
   Map<String, List<String>> _groupByTopFolder(WikiController controller) {
     final out = <String, List<String>>{};
     for (final p in controller.wikiPages) {
-      if (p.startsWith('todos/')) continue;
       final parts = p.split('/');
       if (parts.length >= 2) {
         out.putIfAbsent(parts.first, () => []).add(p);

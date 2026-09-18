@@ -2,9 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:open_file/open_file.dart';
 
 import '../../core/model/llm_tool_call.dart';
 import '../../core/model/message.dart';
+import '../../core/core.dart';
 import '../../design_system/design_system.dart';
 
 /// 对话消息气泡
@@ -545,12 +547,12 @@ class _ChatBubbleState extends State<ChatBubble> {
     }
   }
 
-  /// 图片预览条：水平展示消息中的图片
+  /// 图片预览条：水平展示消息中的附件
   Widget _buildImageStrip(AppSemanticColors c) {
-    final images = widget.parts
+    final attachments = widget.parts
         .where((p) => p is ImageUrlPart || p is MiniMaxFileIdPart)
         .toList();
-    if (images.isEmpty) return const SizedBox.shrink();
+    if (attachments.isEmpty) return const SizedBox.shrink();
 
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 240),
@@ -559,130 +561,91 @@ class _ChatBubbleState extends State<ChatBubble> {
         child: Wrap(
           spacing: 4,
           runSpacing: 4,
-          children: images.map((part) {
-            return _buildImageThumbnail(part, c);
+          children: attachments.map((part) {
+            return _buildAttachmentThumbnail(part, c);
           }).toList(),
         ),
       ),
     );
   }
 
-  /// 单张图片缩略图
-  Widget _buildImageThumbnail(MessagePart part, AppSemanticColors c) {
-    final size = 96.0;
-    final placeholder = Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(color: c.surfaceVariant),
-      child: Icon(Icons.image_outlined, color: c.textTertiary),
-    );
+  /// 单个附件缩略图（图片/视频/音频/文件）
+  Widget _buildAttachmentThumbnail(MessagePart part, AppSemanticColors c) {
+    const size = 96.0;
 
-    // 1) 优先使用本地缩略图（私有目录）
-    final thumb = _extractThumbnail(part);
-    if (thumb != null) {
-      return _fileImage(thumb, size, placeholder);
+    // 1) 优先使用本地缩略图路径
+    final thumbPath = _extractThumbnail(part);
+    if (thumbPath != null && part is ImageUrlPart) {
+      return _clickableImage(thumbPath, size, c);
+    }
+    if (thumbPath != null && part is MiniMaxFileIdPart) {
+      return _clickableAttachment(thumbPath, size, c, part.type);
     }
 
+    // 2) ImageUrlPart：根据 URL 协议处理
     if (part is ImageUrlPart) {
       final url = part.url;
       if (url.startsWith('file://')) {
-        final path = url.substring(7);
-        return _fileImage(path, size, placeholder);
+        return _clickableImage(url.substring(7), size, c);
       }
       if (url.startsWith('mm_file://')) {
-        final fileId = url.replaceFirst('mm_file://', '');
-        return _mmFileThumbnail(fileId, size, c);
+        return _badgeIcon(Icons.broken_image_outlined, c.error, size, c);
       }
       // http(s) URL
-      return Image.network(
-        url,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => placeholder,
-        loadingBuilder: (ctx, child, p) =>
-            p == null ? child : placeholder,
+      return GestureDetector(
+        onTap: () => _showFullImage(context, url: url),
+        child: Image.network(
+          url,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) =>
+              _badgeIcon(Icons.broken_image_outlined, c.error, size, c),
+          loadingBuilder: (ctx, child, p) =>
+              p == null ? child : _badgeLoading(size, c),
+        ),
       );
     }
 
+    // 3) MiniMaxFileIdPart：根据 type 显示对应图标
     if (part is MiniMaxFileIdPart) {
-      return _mmFileThumbnail(part.fileId, size, c);
+      if (part.fileId.isEmpty) {
+        return _badgeIcon(Icons.broken_image_outlined, c.error, size, c);
+      }
+      return _badgeIcon(_iconForType(part.type), c.textSecondary, size, c);
     }
 
-    return placeholder;
+    return _badgeIcon(Icons.insert_drive_file_outlined, c.textTertiary, size, c);
   }
 
   /// 提取本地缩略图路径
   String? _extractThumbnail(MessagePart part) {
-    if (part is ImageUrlPart) {
-      return part.thumbnailPath;
-    }
-    if (part is MiniMaxFileIdPart) {
-      return part.thumbnailPath;
-    }
+    if (part is ImageUrlPart) return part.thumbnailPath;
+    if (part is MiniMaxFileIdPart) return part.thumbnailPath;
     return null;
   }
 
-  Widget _fileImage(String path, double size, Widget placeholder) {
-    final file = File(path);
-    if (!file.existsSync()) return placeholder;
-    return Image.file(
-      file,
-      width: size,
-      height: size,
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => placeholder,
-    );
+  /// 不同附件类型的图标
+  IconData _iconForType(String type) {
+    switch (type) {
+      case 'image':
+        return Icons.image_outlined;
+      case 'video':
+        return Icons.videocam_outlined;
+      case 'audio':
+        return Icons.audio_file_outlined;
+      default:
+        return Icons.insert_drive_file_outlined;
+    }
   }
 
-  /// mm_file:// 协议的展示：
-  /// - 解析中：loading icon
-  /// - 解析成功：Image.network 加载缩略图
-  /// - 解析失败：占位 badge + file_id
-  Widget _mmFileThumbnail(String fileId, double size, AppSemanticColors c) {
-    final placeholder = Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(color: c.surfaceVariant),
-      child: Icon(Icons.image_outlined, color: c.textTertiary),
-    );
-
-    // 解析中
-    if (_resolvingIds.contains(fileId)) {
-      return Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          color: c.surfaceVariant,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        alignment: Alignment.center,
-        child: const SizedBox(
-          width: 22,
-          height: 22,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
-    }
-
-    final url = _resolvedUrls[fileId];
-    if (url == null) {
-      // 解析失败 → 显示 badge
-      return _mmFileBadge(fileId, size, c);
-    }
-
-    return Image.network(
-      url,
-      width: size,
-      height: size,
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => _mmFileBadge(fileId, size, c),
-      loadingBuilder: (ctx, child, p) => p == null ? child : placeholder,
-    );
-  }
-
-  /// mm_file:// 协议的展示：缩略图占位 + file_id 提示
-  Widget _mmFileBadge(String fileId, double size, AppSemanticColors c) {
+  /// 通用附件占位 badge
+  Widget _badgeIcon(
+    IconData icon,
+    Color iconColor,
+    double size,
+    AppSemanticColors c,
+  ) {
     return Container(
       width: size,
       height: size,
@@ -692,22 +655,110 @@ class _ChatBubbleState extends State<ChatBubble> {
         border: Border.all(color: c.border, width: 0.5),
       ),
       alignment: Alignment.center,
-      padding: const EdgeInsets.all(4),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.broken_image_outlined, color: c.error, size: 22),
-          const SizedBox(height: 4),
-          Text(
-            fileId,
-            style: TextStyle(fontSize: 9, color: c.textTertiary),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-          ),
-        ],
+      child: Icon(icon, color: iconColor, size: 26),
+    );
+  }
+
+  /// 加载中的占位
+  Widget _badgeLoading(double size, AppSemanticColors c) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: c.surfaceVariant,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      alignment: Alignment.center,
+      child: const SizedBox(
+        width: 22,
+        height: 22,
+        child: CircularProgressIndicator(strokeWidth: 2),
       ),
     );
+  }
+
+  /// 可点击的本地图片缩略图
+  Widget _clickableImage(String path, double size, AppSemanticColors c) {
+    final file = File(path);
+    if (!file.existsSync()) {
+      return _badgeIcon(Icons.broken_image_outlined, c.error, size, c);
+    }
+    return GestureDetector(
+      onTap: () => _showFullImage(context, filePath: path),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: Image.file(
+          file,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) =>
+              _badgeIcon(Icons.broken_image_outlined, c.error, size, c),
+        ),
+      ),
+    );
+  }
+
+  /// 可点击的附件缩略图（图片看原图，其他调用系统应用预览）
+  Widget _clickableAttachment(
+    String path,
+    double size,
+    AppSemanticColors c,
+    String type,
+  ) {
+    final file = File(path);
+    if (!file.existsSync()) {
+      return _badgeIcon(Icons.broken_image_outlined, c.error, size, c);
+    }
+
+    // 图片 → 查看原图
+    if (type == 'image') {
+      return GestureDetector(
+        onTap: () => _showFullImage(context, filePath: path),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: Image.file(
+            file,
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) =>
+                _badgeIcon(Icons.broken_image_outlined, c.error, size, c),
+          ),
+        ),
+      );
+    }
+
+    // 非图片 → 调用系统应用预览
+    return GestureDetector(
+      onTap: () => _openFile(path),
+      child: _badgeIcon(_iconForType(type), c.textSecondary, size, c),
+    );
+  }
+
+  /// 全屏查看原图
+  void _showFullImage(
+    BuildContext context, {
+    String? filePath,
+    String? url,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _FullScreenImageViewer(filePath: filePath, url: url),
+      ),
+    );
+  }
+
+  /// 调用系统应用打开文件
+  Future<void> _openFile(String path) async {
+    try {
+      final result = await OpenFile.open(path);
+      if (result.type != ResultType.done) {
+        log.error('打开文件失败: ${result.message}');
+      }
+    } catch (e) {
+      log.error('打开文件异常: $e');
+    }
   }
 
   Widget _buildWikiRefs(AppSemanticColors c) {
@@ -1069,4 +1120,63 @@ List<InlineSpan> _buildInlineSpans(
   }
 
   return spans;
+}
+
+/// 全屏图片查看器（支持捏合缩放 + 拖动）
+class _FullScreenImageViewer extends StatelessWidget {
+  const _FullScreenImageViewer({this.filePath, this.url});
+  final String? filePath;
+  final String? url;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppSemanticColors.of(context);
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        leading: IconButton(
+          icon: const Icon(Icons.close, color: Colors.white),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+      body: Center(
+        child: filePath != null
+            ? InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Image.file(
+                  File(filePath!),
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Center(
+                    child: Icon(
+                      Icons.broken_image_outlined,
+                      color: Colors.white54,
+                      size: 64,
+                    ),
+                  ),
+                ),
+              )
+            : url != null
+                ? InteractiveViewer(
+                    minScale: 0.5,
+                    maxScale: 4.0,
+                    child: Image.network(
+                      url!,
+                      fit: BoxFit.contain,
+                      loadingBuilder: (ctx, child, p) =>
+                          p == null ? child : const CircularProgressIndicator(),
+                      errorBuilder: (_, __, ___) => const Center(
+                        child: Icon(
+                          Icons.broken_image_outlined,
+                          color: Colors.white54,
+                          size: 64,
+                        ),
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+      ),
+    );
+  }
 }

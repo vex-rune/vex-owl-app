@@ -10,7 +10,6 @@ import 'package:path_provider/path_provider.dart';
 import '../../application/service/thumbnail_generator.dart';
 
 import '../../application/controller/chat_controller.dart';
-import '../../application/controller/provider_controller.dart';
 import '../../application/controller/session_controller.dart';
 import '../../application/controller/settings_controller.dart';
 import '../../core/core.dart';
@@ -817,35 +816,8 @@ class _MessageList extends ConsumerWidget {
   final void Function(String) onSearchWiki;
   final void Function(String) onWikiRefTap;
 
-  // 持有 container 用于在 callback 中读 Provider
-  ProviderContainer? _container;
-
-  /// 解析 MiniMax file_id → download_url
-  ///
-  /// 把 MiniMax API Key 缓存在这里，每次解析都从当前默认 Provider 配置取。
-  Future<String?> _resolveMmFile(String fileId) async {
-    final container = _container;
-    if (container == null) return null;
-    try {
-      final settingsCtrl = container.read(settingsControllerProvider);
-      final config = settingsCtrl.defaultConfig;
-      if (config == null) return null;
-      final provider = container.read(providerControllerProvider)
-          .resolveProvider(config);
-      if (provider is! MinimaxProvider) return null;
-      return await provider.retrieveFileDownloadUrl(
-        fileId: fileId,
-        apiKey: config.apiKey,
-      );
-    } catch (e) {
-      log.error('解析 mm_file:// 失败: $e');
-      return null;
-    }
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    _container = ProviderScope.containerOf(context);
     final messages = ref.watch(chatControllerProvider).messages;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!scroller.hasClients) return;
@@ -871,7 +843,6 @@ class _MessageList extends ConsumerWidget {
           role: isUser ? ChatBubbleRole.user : ChatBubbleRole.assistant,
           content: msg.content,
           parts: msg.parts,
-          resolveFileUrl: _resolveMmFile,
           reasoning: msg.reasoning,
           toolCalls: msg.toolCalls,
           toolResults: item.toolResults,
